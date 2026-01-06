@@ -63,6 +63,9 @@ class FighterStatsAggregator:
         FROM ufc_fight_stats
         """
         self.fight_stats = pd.read_sql_query(query_fight_stats, self.conn)
+        # Normalize EVENT and BOUT fields
+        self.fight_stats['EVENT'] = self.fight_stats['EVENT'].str.strip()
+        self.fight_stats['BOUT'] = self.fight_stats['BOUT'].str.strip().str.replace(r'\s+', ' ', regex=True)
         print(f"✓ Loaded {len(self.fight_stats)} fight stat records")
         
         # Load fight results (outcome data)
@@ -81,6 +84,9 @@ class FighterStatsAggregator:
         FROM ufc_fight_results
         """
         self.fight_results = pd.read_sql_query(query_results, self.conn)
+        # Normalize EVENT and BOUT fields
+        self.fight_results['EVENT'] = self.fight_results['EVENT'].str.strip()
+        self.fight_results['BOUT'] = self.fight_results['BOUT'].str.strip().str.replace(r'\s+', ' ', regex=True)
         print(f"✓ Loaded {len(self.fight_results)} fight results")
         
         # Load event details (dates)
@@ -92,6 +98,8 @@ class FighterStatsAggregator:
         FROM ufc_event_details
         """
         self.events = pd.read_sql_query(query_events, self.conn)
+        # Normalize EVENT field
+        self.events['EVENT'] = self.events['EVENT'].str.strip()
         print(f"✓ Loaded {len(self.events)} events")
         
         # Load fighter physical attributes
