@@ -1,0 +1,46 @@
+======================================================================
+DATA QUALITY REPORT - fighter_aggregated_stats_with_decay.csv
+======================================================================
+
+OVERALL SUMMARY:
+  Total records: 16,946
+  Total columns: 78
+  Date range: 1994-03-11 to 2025-12-13
+  Unique fighters: 2,627
+
+✅ GOOD DATA QUALITY (>95% populated):
+  OUTCOME: 16,892/16,946 (99.7%)
+  WEIGHTCLASS: 16,892/16,946 (99.7%)
+  HEIGHT: 16,786/16,946 (99.1%)
+  sig_str_per_min: 16,530/16,946 (97.5%)
+  total_str_per_min: 16,659/16,946 (98.2%)
+  sig_str_acc: 16,584/16,946 (97.4%)
+  win: 16,890/16,946 (99.7%)
+
+✅ DECAYED AVERAGES (84.5% is EXPECTED):
+  First fights have no history, so decayed averages are N/A
+  sig_str_per_min_dec_avg: 14,319/16,946 (84.5%)
+  win_dec_avg: 14,303/16,946 (84.4%)
+  td_per_min_dec_avg: 14,319/16,946 (84.5%)
+
+⚠️  SPARSE COLUMNS (Expected - These are RARE events):
+  KD (Knockdowns): 81.6% zeros - Knockdowns are uncommon in fights
+  td_landed (Takedowns): 54.5% zeros - Not all fighters attempt takedowns
+  sub_att (Submissions): 75.8% zeros - Submissions are rare
+  rev (Reversals): 89.0% zeros - Reversals are very rare
+  Note: These zeros are REAL data, not missing data!
+
+SAMPLE DATA (Fighter: AJ Cunningham):
+      DATE  sig_str_per_min  sig_str_per_min_dec_avg  win  win_dec_avg  KD  td_landed  fight_number
+2024-03-02         7.826087                      NaN  1.0          NaN 0.0          0             1
+2025-03-15         1.066667                 7.826087  1.0          1.0 0.0          0             2
+
+======================================================================
+CONCLUSION: Data quality is EXCELLENT
+======================================================================
+✅ 99.7% of records have complete fight metadata
+✅ 97.5% have per-minute statistics
+✅ 84.5% have decayed averages (expected - first fights have no history)
+✅ Sparse columns (KD, TD, SUB) are EXPECTED - these are rare events
+✅ The data is ready for Step 3 (Opponent-Adjusted Performance)
+======================================================================
