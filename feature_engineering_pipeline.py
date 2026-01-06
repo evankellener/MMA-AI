@@ -373,10 +373,71 @@ class FighterStatsAggregator:
         # Calculate days since last fight
         df['days_since_last_fight'] = df.groupby('FIGHTER')['DATE'].diff().dt.days
         
+        # Add win column (1 = win, 0 = loss/draw/no contest)
+        print("Calculating win/loss outcomes...")
+        df['win'] = self._calculate_win_column(df)
+        
         print(f"✓ Final dataset shape: {df.shape}")
         
         self.fighter_level_stats = df
         return df
+    
+    def _calculate_win_column(self, df):
+        """
+        Calculate win column based on OUTCOME field and fighter position.
+        
+        OUTCOME format: "L/W" or "W/L" where first letter = first fighter (alphabetically), second = second fighter
+        Returns: Series with 1 for win, 0 for loss/draw/no contest
+        """
+        win_col = []
+        
+        for idx, row in df.iterrows():
+            outcome = row['OUTCOME']
+            fighter = row['FIGHTER']
+            fighters_in_bout = row['fighters_in_bout']
+            
+            # Handle missing data
+            if pd.isna(outcome) or pd.isna(fighters_in_bout):
+                win_col.append(np.nan)
+                continue
+            
+            # Handle draws and no contests
+            if outcome in ['D/D', 'NC/NC']:
+                win_col.append(0)
+                continue
+            
+            # Parse outcome (e.g., "L/W" or "W/L")
+            if '/' not in str(outcome):
+                win_col.append(np.nan)
+                continue
+                
+            parts = str(outcome).split('/')
+            if len(parts) != 2:
+                win_col.append(np.nan)
+                continue
+            
+            # Get fighter positions (alphabetically sorted)
+            fighters = str(fighters_in_bout).split('|||')
+            if len(fighters) != 2:
+                win_col.append(np.nan)
+                continue
+            
+            # Determine which position this fighter is in
+            try:
+                fighter_position = fighters.index(fighter)
+                result = parts[fighter_position]
+                
+                # W = win, L = loss
+                if result == 'W':
+                    win_col.append(1)
+                elif result == 'L':
+                    win_col.append(0)
+                else:
+                    win_col.append(np.nan)
+            except (ValueError, IndexError):
+                win_col.append(np.nan)
+        
+        return pd.Series(win_col, index=df.index)
     
     def save_aggregated_data(self, output_path='fighter_aggregated_stats.csv'):
         """Save the aggregated fighter-level statistics."""
@@ -419,7 +480,75 @@ class FighterStatsAggregator:
         print(f"  Accuracy rates: {len(acc_cols)}")
         print(f"  Total derived features: {len(per_min_cols) + len(acc_cols)}")
         
+        # Win/loss statistics
+        if 'win' in df.columns:
+            win_count = df['win'].sum()
+            loss_count = (df['win'] == 0).sum()
+            total_with_outcome = win_count + loss_count
+            print(f"\nOutcome Statistics:")
+            print(f"  Wins: {win_count}")
+            print(f"  Losses: {loss_count}")
+            print(f"  Win rate: {win_count/total_with_outcome*100:.1f}%" if total_with_outcome > 0 else "  Win rate: N/A")
+        
         print(f"\n✓ Step 1 Complete: Data aggregated to fighter-level")
+    
+    def print_filtering_report(self):
+        """Print detailed report on what data was filtered and why."""
+        print("\n" + "=" * 60)
+        print("Data Filtering Report")
+        print("=" * 60)
+        
+        # Count records at each stage
+        print("\n=== Records at Each Stage ===")
+        print(f"1. Round-level records (raw): {len(self.fight_stats)}")
+        print(f"2. Fight-level records (aggregated): {len(self.processed_fights)}")
+        print(f"3. Final fighter records: {len(self.fighter_level_stats)}")
+        
+        # Analyze what was filtered during merges
+        print("\n=== Merge Analysis ===")
+        
+        # Check fights without results
+        fights_without_results = self.processed_fights[self.processed_fights['OUTCOME'].isna()]
+        if len(fights_without_results) > 0:
+            print(f"Fights without OUTCOME data: {len(fights_without_results)}")
+            print(f"  Reason: No matching record in ufc_fight_results table")
+            print(f"  Impact: Missing fight duration, per-minute rates = 0")
+        
+        # Check fighters without physical attributes
+        fighters_without_attrs = self.fighter_level_stats[self.fighter_level_stats['HEIGHT'].isna()]
+        if len(fighters_without_attrs) > 0:
+            unique_fighters = fighters_without_attrs['FIGHTER'].nunique()
+            print(f"\nFighters without physical attributes: {len(fighters_without_attrs)} records ({unique_fighters} unique fighters)")
+            print(f"  Reason: No matching record in ufc_fighter_tott table")
+            print(f"  Impact: Missing HEIGHT, WEIGHT, REACH, STANCE, DOB")
+            print(f"  Sample fighters: {', '.join(fighters_without_attrs['FIGHTER'].unique()[:5])}")
+        
+        # Database comparison
+        print("\n=== Database Coverage ===")
+        import sqlite3
+        conn = sqlite3.connect(self.db_path)
+        
+        # Count unique bouts in database
+        db_bouts = pd.read_sql_query("SELECT COUNT(DISTINCT EVENT || BOUT) as count FROM ufc_fight_stats", conn).iloc[0]['count']
+        db_results = pd.read_sql_query("SELECT COUNT(DISTINCT EVENT || BOUT) as count FROM ufc_fight_results", conn).iloc[0]['count']
+        
+        print(f"Unique bouts in ufc_fight_stats: {db_bouts}")
+        print(f"Unique bouts in ufc_fight_results: {db_results}")
+        print(f"Bouts processed: {self.processed_fights[['EVENT', 'BOUT']].drop_duplicates().shape[0]}")
+        
+        # Explain difference
+        if db_bouts > db_results:
+            print(f"\nNote: {db_bouts - db_results} bouts have stats but no results metadata")
+            print("  These may be exhibition matches or data collection issues")
+        
+        conn.close()
+        
+        print("\n=== Summary ===")
+        data_completeness = (len(self.fighter_level_stats) - len(fights_without_results)) / len(self.fighter_level_stats) * 100
+        print(f"Overall data completeness: {data_completeness:.1f}%")
+        print(f"No fights were intentionally filtered - all available data is included")
+        print(f"Missing data is due to incomplete records in source database tables")
+        print("=" * 60)
 
 
 def main():
@@ -448,6 +577,9 @@ def main():
         
         # Step 5: Print summary
         aggregator.print_summary_statistics()
+        
+        # Step 6: Print filtering report
+        aggregator.print_filtering_report()
         
         print("\n" + "=" * 60)
         print("✓ Step 1 completed successfully!")
