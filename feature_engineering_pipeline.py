@@ -729,12 +729,203 @@ class TimeDecayCalculator:
         return df
 
 
+class OpponentAdjustedPerformanceCalculator:
+    """Calculates opponent-adjusted performance (AdjPerf) metrics for fighter statistics."""
+    
+    def __init__(self, min_fights_for_baseline=3, bayesian_prior_weight=5):
+        """
+        Initialize with Bayesian shrinkage parameters.
+        
+        Args:
+            min_fights_for_baseline: Minimum fights needed for opponent baseline
+            bayesian_prior_weight: Weight for Bayesian prior (shrinkage toward mean)
+        """
+        self.min_fights_for_baseline = min_fights_for_baseline
+        self.bayesian_prior_weight = bayesian_prior_weight
+    
+    def calculate_opponent_baselines(self, df, stats_to_adjust):
+        """
+        Calculate what each fighter typically allows opponents to achieve.
+        
+        This creates a baseline showing defensive capability:
+        - Low values = good defense (opponents achieve less)
+        - High values = poor defense (opponents achieve more)
+        
+        Args:
+            df: DataFrame with fight records
+            stats_to_adjust: List of statistics to calculate baselines for
+            
+        Returns:
+            Dictionary mapping (fighter, stat) -> (mean_allowed, std_allowed, n_fights)
+        """
+        print("\n=== Calculating Opponent Baselines ===")
+        print("Computing what each fighter typically allows opponents to achieve...")
+        
+        baselines = {}
+        
+        # For each unique bout, we need both fighters' stats
+        df_sorted = df.sort_values(['EVENT', 'BOUT', 'FIGHTER']).reset_index(drop=True)
+        
+        # Group by bout to get opponent pairs
+        bout_groups = df_sorted.groupby(['EVENT', 'BOUT'])
+        
+        for stat in stats_to_adjust:
+            if stat not in df.columns:
+                continue
+                
+            # Track what each fighter allowed (opponent's performance against them)
+            fighter_allowed = {}
+            
+            for (event, bout), group in bout_groups:
+                if len(group) != 2:
+                    continue  # Skip if not exactly 2 fighters
+                
+                fighter1 = group.iloc[0]['FIGHTER']
+                fighter2 = group.iloc[1]['FIGHTER']
+                
+                stat1 = group.iloc[0][stat]
+                stat2 = group.iloc[1][stat]
+                
+                # Fighter 1 allowed fighter 2 to achieve stat2
+                if pd.notna(stat2):
+                    if fighter1 not in fighter_allowed:
+                        fighter_allowed[fighter1] = []
+                    fighter_allowed[fighter1].append(stat2)
+                
+                # Fighter 2 allowed fighter 1 to achieve stat1
+                if pd.notna(stat1):
+                    if fighter2 not in fighter_allowed:
+                        fighter_allowed[fighter2] = []
+                    fighter_allowed[fighter2].append(stat1)
+            
+            # Calculate mean and std for each fighter
+            for fighter, values in fighter_allowed.items():
+                if len(values) >= self.min_fights_for_baseline:
+                    mean_allowed = np.mean(values)
+                    std_allowed = np.std(values) if len(values) > 1 else np.nan
+                    baselines[(fighter, stat)] = (mean_allowed, std_allowed, len(values))
+        
+        print(f"✓ Calculated baselines for {len(stats_to_adjust)} statistics")
+        print(f"  Total fighter-stat baselines: {len(baselines)}")
+        
+        return baselines
+    
+    def add_opponent_adjusted_performance(self, df, stats_to_adjust, baselines):
+        """
+        Add opponent-adjusted performance columns.
+        
+        Formula: AdjPerf = (fighter_stat - opponent_mean_allowed) / opponent_std_allowed
+        
+        This is a z-score showing how much better/worse the fighter performed
+        compared to what their opponent typically allows.
+        
+        Args:
+            df: DataFrame with fight records
+            stats_to_adjust: List of statistics to adjust
+            baselines: Dictionary from calculate_opponent_baselines()
+            
+        Returns:
+            DataFrame with added adjperf columns
+        """
+        print("\n=== Calculating Opponent-Adjusted Performance ===")
+        print("Applying z-score normalization against opponent baselines...")
+        
+        df = df.copy()
+        df_sorted = df.sort_values(['EVENT', 'BOUT', 'FIGHTER']).reset_index(drop=True)
+        
+        # Initialize adjusted performance columns
+        adjperf_cols = []
+        for stat in stats_to_adjust:
+            col_name = f'{stat}_adjperf'
+            df[col_name] = np.nan
+            adjperf_cols.append(col_name)
+        
+        # Group by bout to get opponent pairs
+        bout_groups = df_sorted.groupby(['EVENT', 'BOUT'])
+        
+        # Global mean and std for Bayesian shrinkage
+        global_stats = {}
+        for stat in stats_to_adjust:
+            if stat in df.columns:
+                valid_values = df[stat].dropna()
+                if len(valid_values) > 0:
+                    global_stats[stat] = (valid_values.mean(), valid_values.std())
+        
+        adjusted_count = 0
+        
+        for (event, bout), group in bout_groups:
+            if len(group) != 2:
+                continue
+            
+            fighter1_idx = group.iloc[0].name
+            fighter2_idx = group.iloc[1].name
+            
+            fighter1 = group.iloc[0]['FIGHTER']
+            fighter2 = group.iloc[1]['FIGHTER']
+            
+            for stat in stats_to_adjust:
+                if stat not in df.columns:
+                    continue
+                
+                stat1 = group.iloc[0][stat]
+                stat2 = group.iloc[1][stat]
+                
+                # Adjust fighter 1's performance against fighter 2's baseline
+                if pd.notna(stat1) and (fighter2, stat) in baselines:
+                    opp_mean, opp_std, n_fights = baselines[(fighter2, stat)]
+                    
+                    # Apply Bayesian shrinkage if few opponent fights
+                    if n_fights < 10 and stat in global_stats:
+                        global_mean, global_std = global_stats[stat]
+                        # Shrink toward global mean
+                        weight = n_fights / (n_fights + self.bayesian_prior_weight)
+                        opp_mean = weight * opp_mean + (1 - weight) * global_mean
+                        opp_std = weight * opp_std + (1 - weight) * global_std if pd.notna(opp_std) else global_std
+                    
+                    if pd.notna(opp_std) and opp_std > 0:
+                        adjperf = (stat1 - opp_mean) / opp_std
+                        df.at[fighter1_idx, f'{stat}_adjperf'] = adjperf
+                        adjusted_count += 1
+                
+                # Adjust fighter 2's performance against fighter 1's baseline
+                if pd.notna(stat2) and (fighter1, stat) in baselines:
+                    opp_mean, opp_std, n_fights = baselines[(fighter1, stat)]
+                    
+                    # Apply Bayesian shrinkage
+                    if n_fights < 10 and stat in global_stats:
+                        global_mean, global_std = global_stats[stat]
+                        weight = n_fights / (n_fights + self.bayesian_prior_weight)
+                        opp_mean = weight * opp_mean + (1 - weight) * global_mean
+                        opp_std = weight * opp_std + (1 - weight) * global_std if pd.notna(opp_std) else global_std
+                    
+                    if pd.notna(opp_std) and opp_std > 0:
+                        adjperf = (stat2 - opp_mean) / opp_std
+                        df.at[fighter2_idx, f'{stat}_adjperf'] = adjperf
+                        adjusted_count += 1
+        
+        print(f"✓ Calculated opponent-adjusted performance for {len(stats_to_adjust)} statistics")
+        print(f"  Total adjustments made: {adjusted_count}")
+        
+        # Show sample statistics
+        if adjperf_cols:
+            non_null_counts = df[adjperf_cols].notna().sum()
+            total_rows = len(df)
+            print(f"  Sample non-null counts (top 5):")
+            for col in adjperf_cols[:5]:
+                count = non_null_counts[col]
+                pct = count/total_rows*100 if total_rows > 0 else 0
+                print(f"    {col}: {count}/{total_rows} ({pct:.1f}%)")
+        
+        return df
+
+
 def main():
     """Main execution function."""
     print("=" * 60)
-    print("MMA AI Feature Engineering Pipeline - Steps 1 & 2")
+    print("MMA AI Feature Engineering Pipeline - Steps 1, 2 & 3")
     print("Step 1: Data Aggregation")
     print("Step 2: Time-Decayed Averages")
+    print("Step 3: Opponent-Adjusted Performance")
     print("=" * 60)
     
     # Initialize aggregator
@@ -784,17 +975,63 @@ def main():
         print(f"\n✓ Step 2 Complete: Time-decayed averages calculated")
         print(f"  Added {len(existing_stats)} decayed average columns")
         
-        # Step 5: Save results
-        aggregator.save_aggregated_data('fighter_aggregated_stats_with_decay.csv')
+        # Step 5: Apply opponent-adjusted performance (Step 3 of pipeline)
+        print("\n" + "=" * 60)
+        print("Step 3: Opponent-Adjusted Performance")
+        print("=" * 60)
         
-        # Step 6: Print summary
+        adjperf_calculator = OpponentAdjustedPerformanceCalculator(
+            min_fights_for_baseline=3,
+            bayesian_prior_weight=5
+        )
+        
+        # Select stats to adjust (key offensive stats)
+        stats_to_adjust = [
+            # Per-minute rates
+            'sig_str_per_min', 'total_str_per_min', 'td_per_min',
+            # Accuracy rates
+            'sig_str_acc', 'td_acc', 'head_acc',
+            # Base stats
+            'sig_str_landed', 'head_landed', 'body_landed', 'leg_landed',
+            'distance_landed', 'clinch_landed', 'ground_landed',
+            'KD'
+        ]
+        
+        existing_adjust_stats = [stat for stat in stats_to_adjust if stat in aggregator.fighter_level_stats.columns]
+        print(f"Calculating opponent-adjusted performance for {len(existing_adjust_stats)} statistics...")
+        
+        # Calculate opponent baselines
+        baselines = adjperf_calculator.calculate_opponent_baselines(
+            aggregator.fighter_level_stats,
+            existing_adjust_stats
+        )
+        
+        # Apply adjustments
+        aggregator.fighter_level_stats = adjperf_calculator.add_opponent_adjusted_performance(
+            aggregator.fighter_level_stats,
+            existing_adjust_stats,
+            baselines
+        )
+        
+        print(f"\n✓ Step 3 Complete: Opponent-adjusted performance calculated")
+        print(f"  Added {len(existing_adjust_stats)} adjperf columns")
+        
+        # Step 6: Save results
+        output_file = 'fighter_aggregated_stats_with_decay_and_adjperf.csv'
+        aggregator.fighter_level_stats.to_csv(output_file, index=False)
+        print(f"\n✓ Saved aggregated data to: {output_file}")
+        print(f"  - Total records: {len(aggregator.fighter_level_stats)}")
+        print(f"  - Unique fighters: {aggregator.fighter_level_stats['FIGHTER'].nunique()}")
+        print(f"  - Columns: {len(aggregator.fighter_level_stats.columns)}")
+        
+        # Step 7: Print summary
         aggregator.print_summary_statistics()
         
-        # Step 7: Print filtering report
+        # Step 8: Print filtering report
         aggregator.print_filtering_report()
         
         print("\n" + "=" * 60)
-        print("✓ Steps 1 & 2 completed successfully!")
+        print("✓ Steps 1, 2 & 3 completed successfully!")
         print("=" * 60)
         
     except Exception as e:
