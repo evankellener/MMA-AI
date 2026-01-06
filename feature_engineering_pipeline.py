@@ -551,11 +551,190 @@ class FighterStatsAggregator:
         print("=" * 60)
 
 
+class TimeDecayCalculator:
+    """Calculates time-decayed averages for fighter statistics."""
+    
+    def __init__(self, half_life_years=1.5):
+        """
+        Initialize with half-life parameter.
+        
+        Args:
+            half_life_years: Half-life for exponential decay (default: 1.5 years from mma_ai.md)
+        """
+        self.half_life_years = half_life_years
+        # Calculate lambda for exponential decay: lambda = ln(2) / half_life
+        self.decay_lambda = np.log(2) / half_life_years
+        
+    def calculate_decay_weights(self, dates, current_date):
+        """
+        Calculate exponential decay weights for historical data.
+        
+        Formula: weight = EXP(-λ × ((T - t) / 365.25))
+        where T = current date, t = historical date, λ = ln(2) / half_life
+        
+        Args:
+            dates: Series of historical dates
+            current_date: Current reference date
+            
+        Returns:
+            Series of decay weights (higher = more recent)
+        """
+        # Calculate days difference
+        days_diff = (current_date - dates).dt.days
+        
+        # Calculate years difference
+        years_diff = days_diff / 365.25
+        
+        # Apply exponential decay
+        weights = np.exp(-self.decay_lambda * years_diff)
+        
+        return weights
+    
+    def calculate_decayed_average(self, values, weights):
+        """
+        Calculate weighted average using decay weights.
+        
+        Args:
+            values: Series of stat values
+            weights: Series of decay weights
+            
+        Returns:
+            Weighted average
+        """
+        # Handle NaN values
+        valid_mask = values.notna() & weights.notna()
+        
+        if not valid_mask.any():
+            return np.nan
+        
+        valid_values = values[valid_mask]
+        valid_weights = weights[valid_mask]
+        
+        # Calculate weighted average
+        weighted_sum = (valid_values * valid_weights).sum()
+        weight_sum = valid_weights.sum()
+        
+        if weight_sum == 0:
+            return np.nan
+        
+        return weighted_sum / weight_sum
+    
+    def add_decayed_averages(self, df, stats_to_decay, max_fighters=None):
+        """
+        Add time-decayed average columns for specified statistics (optimized version).
+        
+        For each fighter, calculates decayed average of past performance
+        up to (but not including) the current fight.
+        
+        Args:
+            df: DataFrame with fight records (must be sorted by FIGHTER, DATE)
+            stats_to_decay: List of column names to calculate decayed averages for
+            max_fighters: Optional limit for testing (None = process all)
+            
+        Returns:
+            DataFrame with added decayed average columns
+        """
+        print("\n=== Calculating Time-Decayed Averages ===")
+        print(f"Half-life: {self.half_life_years} years")
+        print(f"Decay lambda: {self.decay_lambda:.4f}")
+        
+        df = df.copy()
+        
+        # Ensure data is sorted and has proper index
+        df = df.sort_values(['FIGHTER', 'DATE']).reset_index(drop=True)
+        
+        # Initialize decayed average columns
+        decayed_cols = []
+        for stat in stats_to_decay:
+            col_name = f'{stat}_dec_avg'
+            df[col_name] = np.nan
+            decayed_cols.append(col_name)
+        
+        # Get unique fighters
+        fighters = df['FIGHTER'].unique()
+        if max_fighters:
+            fighters = fighters[:max_fighters]
+            print(f"  (Testing mode: processing {max_fighters} fighters)")
+        
+        total_fighters = len(fighters)
+        print(f"Processing {total_fighters} fighters...")
+        
+        # Process in batches for progress reporting
+        batch_size = max(1, total_fighters // 10)
+        
+        for fighter_idx, fighter in enumerate(fighters):
+            # Progress reporting
+            if (fighter_idx + 1) % batch_size == 0 or fighter_idx == 0:
+                print(f"  Progress: {fighter_idx + 1}/{total_fighters} fighters processed")
+            
+            # Get all records for this fighter
+            fighter_mask = (df['FIGHTER'] == fighter)
+            fighter_rows = df[fighter_mask]
+            
+            if len(fighter_rows) < 2:
+                continue  # Need at least 2 fights to calculate a decayed average
+            
+            # Get indices and dates for this fighter
+            indices = fighter_rows.index.tolist()
+            dates = fighter_rows['DATE'].values
+            
+            # For each fight (starting from second), calculate decayed avg of previous fights
+            for i in range(1, len(indices)):
+                current_idx = indices[i]
+                current_date = dates[i]
+                
+                # Get previous fights
+                prev_indices = indices[:i]
+                prev_dates = dates[:i]
+                
+                # Calculate time differences in years
+                days_diff = (current_date - prev_dates) / np.timedelta64(1, 'D')
+                years_diff = days_diff / 365.25
+                
+                # Calculate decay weights
+                weights = np.exp(-self.decay_lambda * years_diff)
+                
+                # Calculate decayed average for each stat
+                for stat in stats_to_decay:
+                    if stat in df.columns:
+                        prev_values = df.loc[prev_indices, stat].values
+                        
+                        # Filter out NaN values
+                        valid_mask = ~np.isnan(prev_values)
+                        
+                        if valid_mask.any():
+                            valid_values = prev_values[valid_mask]
+                            valid_weights = weights[valid_mask]
+                            
+                            # Weighted average
+                            weighted_sum = np.sum(valid_values * valid_weights)
+                            weight_sum = np.sum(valid_weights)
+                            
+                            if weight_sum > 0:
+                                df.at[current_idx, f'{stat}_dec_avg'] = weighted_sum / weight_sum
+        
+        print(f"✓ Calculated decayed averages for {len(stats_to_decay)} statistics")
+        print(f"  Total decayed average columns: {len(decayed_cols)}")
+        
+        # Show sample statistics
+        if decayed_cols:
+            non_null_counts = df[decayed_cols].notna().sum()
+            total_rows = len(df)
+            print(f"  Sample non-null counts (top 5):")
+            for col in decayed_cols[:5]:
+                count = non_null_counts[col]
+                pct = count/total_rows*100
+                print(f"    {col}: {count}/{total_rows} ({pct:.1f}%)")
+        
+        return df
+
+
 def main():
     """Main execution function."""
     print("=" * 60)
-    print("MMA AI Feature Engineering Pipeline - Step 1")
-    print("Aggregating Fight-Level Stats to Fighter-Level")
+    print("MMA AI Feature Engineering Pipeline - Steps 1 & 2")
+    print("Step 1: Data Aggregation")
+    print("Step 2: Time-Decayed Averages")
     print("=" * 60)
     
     # Initialize aggregator
@@ -572,17 +751,50 @@ def main():
         # Step 3: Create fighter-level aggregates
         aggregator.create_fighter_aggregates()
         
-        # Step 4: Save results
-        aggregator.save_aggregated_data()
+        # Step 4: Apply time-decayed averages (Step 2 of pipeline)
+        print("\n" + "=" * 60)
+        print("Step 2: Time-Decayed Averages")
+        print("=" * 60)
         
-        # Step 5: Print summary
+        decay_calculator = TimeDecayCalculator(half_life_years=1.5)
+        
+        # Select key stats to apply time decay to (reduced set for performance)
+        stats_to_decay = [
+            # Per-minute rates (most important)
+            'sig_str_per_min', 'total_str_per_min', 'td_per_min', 
+            'sub_att_per_min', 'kd_per_min', 'ctrl_per_min',
+            # Key accuracy rates
+            'sig_str_acc', 'td_acc', 'head_acc',
+            # Critical base stats
+            'sig_str_landed', 'td_landed', 'KD',
+            'head_landed', 'body_landed', 'leg_landed',
+            # Fight outcomes and attributes
+            'win', 'age_at_fight', 'days_since_last_fight'
+        ]
+        
+        # Filter to only existing columns
+        existing_stats = [stat for stat in stats_to_decay if stat in aggregator.fighter_level_stats.columns]
+        print(f"Applying time decay to {len(existing_stats)} statistics...")
+        
+        aggregator.fighter_level_stats = decay_calculator.add_decayed_averages(
+            aggregator.fighter_level_stats,
+            existing_stats
+        )
+        
+        print(f"\n✓ Step 2 Complete: Time-decayed averages calculated")
+        print(f"  Added {len(existing_stats)} decayed average columns")
+        
+        # Step 5: Save results
+        aggregator.save_aggregated_data('fighter_aggregated_stats_with_decay.csv')
+        
+        # Step 6: Print summary
         aggregator.print_summary_statistics()
         
-        # Step 6: Print filtering report
+        # Step 7: Print filtering report
         aggregator.print_filtering_report()
         
         print("\n" + "=" * 60)
-        print("✓ Step 1 completed successfully!")
+        print("✓ Steps 1 & 2 completed successfully!")
         print("=" * 60)
         
     except Exception as e:

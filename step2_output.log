@@ -1,0 +1,129 @@
+============================================================
+MMA AI Feature Engineering Pipeline - Steps 1 & 2
+Step 1: Data Aggregation
+Step 2: Time-Decayed Averages
+============================================================
+✓ Connected to database: sqlite_scrapper.db
+
+=== Loading Base Data ===
+✓ Loaded 39964 fight stat records
+✓ Loaded 8465 fight results
+✓ Loaded 757 events
+✓ Loaded 2543 fighter profiles
+✓ Loaded 16752 win/loss/ko records
+
+=== Processing Fight Statistics ===
+Parsing stat strings...
+✓ Parsed statistics for 39964 records
+Aggregating round-level data to fight-level...
+✓ Aggregated to 16944 fight-level records
+Merging with fight results...
+Merging with event dates...
+✓ Processed 16946 complete fight records
+
+=== Creating Fighter-Level Aggregates ===
+✓ Processing 2627 unique fighters
+Calculating per-minute rates...
+Calculating accuracy rates...
+✓ Calculated 16 derived statistics
+Merging with fighter physical attributes...
+Calculating win/loss outcomes...
+✓ Final dataset shape: (16946, 60)
+
+============================================================
+Step 2: Time-Decayed Averages
+============================================================
+Applying time decay to 18 statistics...
+
+=== Calculating Time-Decayed Averages ===
+Half-life: 1.5 years
+Decay lambda: 0.4621
+Processing 2627 fighters...
+  Progress: 1/2627 fighters processed
+  Progress: 262/2627 fighters processed
+  Progress: 524/2627 fighters processed
+  Progress: 786/2627 fighters processed
+  Progress: 1048/2627 fighters processed
+  Progress: 1310/2627 fighters processed
+  Progress: 1572/2627 fighters processed
+  Progress: 1834/2627 fighters processed
+  Progress: 2096/2627 fighters processed
+  Progress: 2358/2627 fighters processed
+  Progress: 2620/2627 fighters processed
+✓ Calculated decayed averages for 18 statistics
+  Total decayed average columns: 18
+  Sample non-null counts (top 5):
+    sig_str_per_min_dec_avg: 14319/16946 (84.5%)
+    total_str_per_min_dec_avg: 14319/16946 (84.5%)
+    td_per_min_dec_avg: 14319/16946 (84.5%)
+    sub_att_per_min_dec_avg: 14319/16946 (84.5%)
+    kd_per_min_dec_avg: 14319/16946 (84.5%)
+
+✓ Step 2 Complete: Time-decayed averages calculated
+  Added 18 decayed average columns
+
+✓ Saved aggregated data to: fighter_aggregated_stats_with_decay.csv
+  - Total records: 16946
+  - Unique fighters: 2627
+  - Columns: 78
+
+=== Summary Statistics ===
+
+Dataset Overview:
+  Total fight records: 16946
+  Unique fighters: 2627
+  Date range: 1994-03-11 00:00:00 to 2025-12-13 00:00:00
+  Weight classes: 118
+
+Base Statistics (22 categories):
+  Core stats tracked: 21
+
+Derived Features:
+  Per-minute rates: 13
+  Accuracy rates: 12
+  Total derived features: 25
+
+Outcome Statistics:
+  Wins: 8296.0
+  Losses: 8594
+  Win rate: 49.1%
+
+✓ Step 1 Complete: Data aggregated to fighter-level
+
+============================================================
+Data Filtering Report
+============================================================
+
+=== Records at Each Stage ===
+1. Round-level records (raw): 39964
+2. Fight-level records (aggregated): 16946
+3. Final fighter records: 16946
+
+=== Merge Analysis ===
+Fights without OUTCOME data: 54
+  Reason: No matching record in ufc_fight_results table
+  Impact: Missing fight duration, per-minute rates = 0
+
+Fighters without physical attributes: 160 records (87 unique fighters)
+  Reason: No matching record in ufc_fighter_tott table
+  Impact: Missing HEIGHT, WEIGHT, REACH, STANCE, DOB
+  Sample fighters: Adriano Santos, Alberta Cerra Leon, Allan Goes, Andy Anderson, Anthony Macias
+
+=== Database Coverage ===
+Unique bouts in ufc_fight_stats: 8493
+Unique bouts in ufc_fight_results: 8464
+Bouts processed: 8472
+
+Note: 29 bouts have stats but no results metadata
+  These may be exhibition matches or data collection issues
+
+=== Summary ===
+Overall data completeness: 99.7%
+No fights were intentionally filtered - all available data is included
+Missing data is due to incomplete records in source database tables
+============================================================
+
+============================================================
+✓ Steps 1 & 2 completed successfully!
+============================================================
+✓ Database connection closed
