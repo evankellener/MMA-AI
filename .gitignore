@@ -9,11 +9,6 @@ venv/
 ENV/
 .venv
 
-# Database
-*.db
-*.sqlite
-*.sqlite3
-
 # IDE
 .vscode/
 .idea/
@@ -24,7 +19,4 @@ ENV/
 # OS
 .DS_Store
 Thumbs.db
-
-# Project specific
-sqlite_scrapper.db
 
