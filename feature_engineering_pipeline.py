@@ -1107,7 +1107,7 @@ class FeatureSelector:
         
         # Identify metadata and feature columns
         metadata_cols = ['EVENT', 'BOUT', 'DATE', 'OUTCOME', 'WEIGHTCLASS', 'METHOD', 
-                        'fighter1_name', 'fighter2_name', target_col]
+                        'fighter1', 'fighter2', target_col]
         
         # Get all feature columns (numeric columns excluding metadata and target)
         feature_cols = [col for col in matchup_df.columns 
