@@ -1080,13 +1080,125 @@ class OpponentAdjustedPerformanceCalculator:
         return df
 
 
+class MatchupComparisons:
+    """Creates comparative features between two fighters in a matchup."""
+    
+    def __init__(self):
+        """Initialize the matchup comparison calculator."""
+        pass
+    
+    def create_matchup_dataset(self, df):
+        """
+        Create matchup comparison dataset where each row is a fight with features 
+        comparing Fighter1 vs Fighter2.
+        
+        Args:
+            df: DataFrame with fighter-level stats (one row per fighter per fight)
+            
+        Returns:
+            DataFrame with matchup-level comparisons (one row per fight)
+        """
+        print("\n" + "=" * 60)
+        print("Step 5: Matchup Comparisons")
+        print("=" * 60)
+        print("Creating comparative features between fighters...")
+        
+        # Group by bout to get fighter pairs
+        bout_groups = df.groupby(['EVENT', 'BOUT'])
+        
+        matchup_data = []
+        processed = 0
+        skipped = 0
+        
+        for (event, bout), group in bout_groups:
+            # Only process bouts with exactly 2 fighters
+            if len(group) != 2:
+                skipped += 1
+                continue
+            
+            fighter1_row = group.iloc[0]
+            fighter2_row = group.iloc[1]
+            
+            # Create matchup record
+            matchup = self._create_matchup_features(fighter1_row, fighter2_row, event, bout)
+            matchup_data.append(matchup)
+            
+            processed += 1
+            if processed % 1000 == 0:
+                print(f"  Progress: {processed} matchups processed")
+        
+        print(f"\n✓ Processed {processed} matchups")
+        print(f"  Skipped {skipped} incomplete bouts")
+        
+        matchup_df = pd.DataFrame(matchup_data)
+        print(f"✓ Generated matchup dataset with {len(matchup_df.columns)} features")
+        
+        return matchup_df
+    
+    def _create_matchup_features(self, f1_row, f2_row, event, bout):
+        """
+        Create comparative features for a single matchup.
+        
+        Args:
+            f1_row: Fighter 1's row (Series)
+            f2_row: Fighter 2's row (Series)
+            event: Event name
+            bout: Bout identifier
+            
+        Returns:
+            Dictionary with matchup features
+        """
+        matchup = {}
+        
+        # Metadata
+        matchup['EVENT'] = event
+        matchup['BOUT'] = bout
+        matchup['DATE'] = f1_row.get('DATE')
+        matchup['fighter1'] = f1_row['FIGHTER']
+        matchup['fighter2'] = f2_row['FIGHTER']
+        matchup['OUTCOME'] = f1_row.get('OUTCOME')
+        matchup['WEIGHTCLASS'] = f1_row.get('WEIGHTCLASS')
+        matchup['METHOD'] = f1_row.get('METHOD')
+        
+        # Target variable: Fighter 1 win
+        if pd.notna(f1_row.get('win')):
+            matchup['fighter1_win'] = f1_row['win']
+        
+        # Get all numeric features to compare
+        numeric_cols = f1_row.index[f1_row.apply(lambda x: isinstance(x, (int, float, np.number)))]
+        
+        # Exclude metadata columns from comparisons
+        exclude_cols = {'win', 'fight_number'}
+        numeric_cols = [col for col in numeric_cols if col not in exclude_cols]
+        
+        for col in numeric_cols:
+            f1_val = f1_row.get(col)
+            f2_val = f2_row.get(col)
+            
+            # Store individual fighter values
+            matchup[f'f1_{col}'] = f1_val
+            matchup[f'f2_{col}'] = f2_val
+            
+            # Calculate difference: Fighter1 - Fighter2
+            if pd.notna(f1_val) and pd.notna(f2_val):
+                matchup[f'diff_{col}'] = f1_val - f2_val
+                
+                # Calculate ratio: Fighter1 / Fighter2 (avoid division by zero)
+                if f2_val != 0 and abs(f2_val) > 1e-10:
+                    matchup[f'ratio_{col}'] = f1_val / f2_val
+        
+        return matchup
+
+
 def main():
     """Main execution function."""
     print("=" * 60)
-    print("MMA AI Feature Engineering Pipeline - Steps 1, 2 & 3")
+    print("MMA AI Feature Engineering Pipeline - Steps 1-5")
     print("Step 1: Data Aggregation")
     print("Step 2: Time-Decayed Averages")
     print("Step 3: Opponent-Adjusted Performance")
+    print("Step 4: Advanced Aggregations")
+    print("Step 5: Matchup Comparisons")
     print("=" * 60)
     
     # Initialize aggregator
@@ -1217,26 +1329,44 @@ def main():
         print(f"  Expanded feature space significantly")
         print(f"  Total columns now: {len(aggregator.fighter_level_stats.columns)}")
         
-        # Step 6: Save results
+        # Save intermediate results
         output_file = 'fighter_aggregated_stats_with_advanced_features.csv'
         aggregator.fighter_level_stats.to_csv(output_file, index=False)
-        print(f"\n✓ Saved aggregated data to: {output_file}")
+        print(f"\n✓ Saved fighter-level data to: {output_file}")
         print(f"  - Total records: {len(aggregator.fighter_level_stats)}")
         print(f"  - Unique fighters: {aggregator.fighter_level_stats['FIGHTER'].nunique()}")
         print(f"  - Columns: {len(aggregator.fighter_level_stats.columns)}")
         
-        # Step 7: Print summary
+        # Step 5: Create matchup comparison dataset
+        matchup_calc = MatchupComparisons()
+        matchup_df = matchup_calc.create_matchup_dataset(aggregator.fighter_level_stats)
+        
+        # Save matchup dataset
+        matchup_output_file = 'matchup_comparisons.csv'
+        matchup_df.to_csv(matchup_output_file, index=False)
+        print(f"\n✓ Saved matchup comparison data to: {matchup_output_file}")
+        print(f"  - Total matchups: {len(matchup_df)}")
+        print(f"  - Total features: {len(matchup_df.columns)}")
+        print(f"  - Feature types:")
+        print(f"    • Individual fighter features (f1_*, f2_*)")
+        print(f"    • Difference features (diff_*): Fighter1 - Fighter2")
+        print(f"    • Ratio features (ratio_*): Fighter1 / Fighter2")
+        
+        # Step 6: Print summary
         aggregator.print_summary_statistics()
         
-        # Step 8: Print filtering report
+        # Step 7: Print filtering report
         aggregator.print_filtering_report()
         
         print("\n" + "=" * 60)
-        print("✓ Steps 1-4 completed successfully!")
+        print("✓ Steps 1-5 completed successfully!")
         print("=" * 60)
-        print(f"Feature expansion complete: ~{len(aggregator.fighter_level_stats.columns)} features per fighter")
-        print("Next: Step 5 will add matchup comparisons (difference/ratio features)")
-        print("      Step 6 will perform feature selection to identify top predictive features")
+        print(f"Fighter-level features: ~{len(aggregator.fighter_level_stats.columns)} columns")
+        print(f"Matchup-level features: ~{len(matchup_df.columns)} columns")
+        print(f"\nNext steps:")
+        print("  Step 6: Feature selection to identify ~30 most predictive features")
+        print("  Step 7: Model training with AutoGluon")
+        print(f"\nTarget: 71% accuracy, 0.602 log loss, 0.207 Brier score")
         
     except Exception as e:
         print(f"\n✗ Error: {e}")
