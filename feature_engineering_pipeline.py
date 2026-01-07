@@ -444,6 +444,9 @@ class FighterStatsAggregator:
         if not hasattr(self, 'fighter_level_stats'):
             raise ValueError("Must run create_fighter_aggregates() first")
         
+        # Sort by date, then by bout within each date
+        self.fighter_level_stats = self.fighter_level_stats.sort_values(['DATE', 'BOUT'])
+        
         self.fighter_level_stats.to_csv(output_path, index=False)
         print(f"\n✓ Saved aggregated data to: {output_path}")
         print(f"  - Total records: {len(self.fighter_level_stats)}")
@@ -1477,6 +1480,8 @@ def main():
         
         # Save intermediate results
         output_file = 'fighter_aggregated_stats_with_advanced_features.csv'
+        # Sort by date, then by bout within each date
+        aggregator.fighter_level_stats = aggregator.fighter_level_stats.sort_values(['DATE', 'BOUT'])
         aggregator.fighter_level_stats.to_csv(output_file, index=False)
         print(f"\n✓ Saved fighter-level data to: {output_file}")
         print(f"  - Total records: {len(aggregator.fighter_level_stats)}")
@@ -1489,6 +1494,8 @@ def main():
         
         # Save matchup dataset
         matchup_output_file = 'matchup_comparisons.csv'
+        # Sort by date, then by bout within each date
+        matchup_df = matchup_df.sort_values(['DATE', 'BOUT'])
         matchup_df.to_csv(matchup_output_file, index=False)
         print(f"\n✓ Saved matchup comparison data to: {matchup_output_file}")
         print(f"  - Total matchups: {len(matchup_df)}")
@@ -1504,6 +1511,8 @@ def main():
         
         # Save selected features dataset
         selected_output_file = 'matchup_selected_features.csv'
+        # Sort by date, then by bout within each date
+        selected_df = selected_df.sort_values(['DATE', 'BOUT'])
         selected_df.to_csv(selected_output_file, index=False)
         print(f"\n✓ Saved selected features dataset to: {selected_output_file}")
         print(f"  - Total matchups: {len(selected_df)}")
