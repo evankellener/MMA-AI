@@ -27,3 +27,4 @@ python OCR_script.py
 
 This will process all PNG files matching the pattern `mma_ai-*.png` and generate `mma_ai.md` with the extracted text.
 
+
