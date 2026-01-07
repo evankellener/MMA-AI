@@ -773,9 +773,6 @@ class AdvancedAggregationsCalculator:
         print("  Calculating round-specific aggregations...")
         df = self._add_round_specific_features(df)
         
-        print("  Calculating ELO ratings...")
-        df = self._add_elo_ratings(df)
-        
         return df
     
     def _add_peak_valley_features(self, df, stats):
@@ -892,85 +889,6 @@ class AdvancedAggregationsCalculator:
             
         return df
     
-    def _add_elo_ratings(self, df):
-        """
-        Calculate ELO ratings for each fighter over time.
-        
-        ELO system: winners gain points, losers lose points based on rating difference.
-        """
-        # Initialize ELO ratings
-        elo_ratings = {}
-        initial_elo = 1500
-        k_factor = 32  # How much ratings change per fight
-        
-        elo_values = []
-        elo_differential_values = []
-        elo_peak_values = []
-        elo_valley_values = []
-        
-        for idx, row in df.iterrows():
-            fighter = row['FIGHTER']
-            
-            # Initialize fighter ELO if first fight
-            if fighter not in elo_ratings:
-                elo_ratings[fighter] = initial_elo
-            
-            # Get current ELO before this fight
-            current_elo = elo_ratings[fighter]
-            elo_values.append(current_elo)
-            
-            # Track peak and valley
-            if f'elo_peak_{fighter}' not in locals():
-                elo_peak_values.append(current_elo)
-                elo_valley_values.append(current_elo)
-            else:
-                elo_peak_values.append(max(current_elo, elo_peak_values[-1] if elo_peak_values else current_elo))
-                elo_valley_values.append(min(current_elo, elo_valley_values[-1] if elo_valley_values else current_elo))
-            
-            # Calculate ELO differential (placeholder - would need opponent ELO)
-            elo_differential_values.append(0)  # Will be calculated properly in Step 5
-            
-            # Update ELO based on fight outcome
-            if pd.notna(row.get('win')):
-                win = row['win']
-                # Simplified ELO update (proper update needs opponent rating)
-                if win == 1:
-                    elo_ratings[fighter] += k_factor * 0.5  # Simplified
-                else:
-                    elo_ratings[fighter] -= k_factor * 0.5  # Simplified
-        
-        # Build all new columns as a dictionary
-        new_cols = {
-            'elo': elo_values,
-            'elo_differential': elo_differential_values,  # Placeholder
-            'elo_peak': elo_peak_values,
-            'elo_valley': elo_valley_values
-        }
-        
-        # Add these columns first
-        df = pd.concat([df, pd.DataFrame(new_cols, index=df.index)], axis=1)
-        
-        # Now calculate derived columns
-        additional_cols = {}
-        additional_cols['elo_differential_vs_peak'] = df['elo'] - df['elo_peak']
-        additional_cols['elo_differential_vs_valley'] = df['elo'] - df['elo_valley']
-        
-        # Change metrics
-        additional_cols['elo_avg'] = df.groupby('FIGHTER')['elo'].transform(lambda x: x.expanding().mean())
-        additional_cols['change_avg_elo_differential'] = df['elo'] - additional_cols['elo_avg']
-        additional_cols['change_elo_differential'] = df.groupby('FIGHTER')['elo'].diff()
-        
-        # Recent ELO average
-        additional_cols['recent_avg_elo'] = df.groupby('FIGHTER')['elo'].transform(
-            lambda x: x.rolling(window=self.recent_threshold, min_periods=1).mean()
-        )
-        additional_cols['change_recent_avg_elo_differential'] = additional_cols['recent_avg_elo'] - additional_cols['elo_avg']
-        
-        # Concatenate additional columns
-        df = pd.concat([df, pd.DataFrame(additional_cols, index=df.index)], axis=1)
-        
-        return df
-
 
 class OpponentAdjustedPerformanceCalculator:
     """Calculates opponent-adjusted performance (AdjPerf) metrics for fighter statistics."""
