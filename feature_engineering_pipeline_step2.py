@@ -4,8 +4,8 @@ Time-decayed averages, opponent-adjusted performance, and decayed differences.
 
 This module computes:
 1. Time-decayed averages using an exponential decay with a 1.5-year half-life.
-2. Opponent-adjusted performance (AdjPerf) using opponent "allowed" history and
-   robust spread (MAD) for z-scoring.
+2. Opponent-adjusted performance (AdjPerf) using opponent "allowed" history,
+   time decay, weight-class priors, and robust spread (MAD) for z-scoring.
 3. Decayed average difference features between fighter and opponent.
 """
 
@@ -13,9 +13,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Iterable, Dict, List, Tuple
+from typing import Iterable, Dict, List, Tuple, Optional
 import json
-from typing import Callable, Iterable, Dict, List, Tuple
+from typing import Callable
 
 import numpy as np
 import pandas as pd
@@ -27,6 +27,7 @@ HALF_LIFE_YEARS = 1.5
 DECAY_LAMBDA = np.log(2.0) / HALF_LIFE_YEARS
 MIN_ROBUST_SPREAD = 1e-6
 ADJPERF_CLIP = 7.0
+ADJPERF_RELEVANT_SUFFIXES = ("_per_min", "_acc", "_def", "_ratio")
 
 @dataclass(frozen=True)
 class FeatureBuilder:
@@ -239,11 +240,39 @@ def weighted_mad(values: np.ndarray, weights: np.ndarray) -> float:
     return max(float(mad), MIN_ROBUST_SPREAD)
 
 
+def shrink_toward_prior(
+    value: float, weight: float, prior_value: float, prior_weight: float
+) -> float:
+    if np.isnan(value):
+        return prior_value
+    if np.isnan(prior_value):
+        return value
+    total_weight = weight + prior_weight
+    if total_weight == 0:
+        return np.nan
+    return (value * weight + prior_value * prior_weight) / total_weight
+
+
+def select_adjperf_stats(
+    df: pd.DataFrame, configured: Optional[Iterable[str]] = None
+) -> List[str]:
+    if configured:
+        return [stat for stat in configured if stat in df.columns]
+    stats = []
+    for col in df.columns:
+        if col in NON_STAT_COLUMNS or col.startswith("opp_"):
+            continue
+        if col.endswith(ADJPERF_RELEVANT_SUFFIXES):
+            stats.append(col)
+    return stats
+
+
 @dataclass
 class FeatureConfig:
     stats_for_decay: List[str]
-    stats_for_adjperf: List[str]
+    stats_for_adjperf: Optional[List[str]]
     diff_feature_map: Dict[str, str]
+    adjperf_prior_weight: float = 5.0
 
 
 DEFAULT_CONFIG = FeatureConfig(
@@ -262,14 +291,7 @@ DEFAULT_CONFIG = FeatureConfig(
         "sig_str_def",
         "reach_ratio",
     ],
-    stats_for_adjperf=[
-        "sig_str_per_min",
-        "total_str_per_min",
-        "td_per_min",
-        "sig_str_acc",
-        "head_acc",
-        "head_def",
-    ],
+    stats_for_adjperf=None,
     diff_feature_map={
         "age_at_fight": "Age Decayed Average Difference",
         "reach_ratio": "Reach Ratio Decayed Average Difference",
@@ -394,6 +416,17 @@ class TimeDecayFeatureEngineer:
         return df
 
     def add_adjperf(self, df: pd.DataFrame, stats: Iterable[str]) -> pd.DataFrame:
+        raise NotImplementedError(
+            "Use add_adjperf_with_priors for opponent-adjusted performance calculations."
+        )
+
+    def add_adjperf_with_priors(
+        self,
+        df: pd.DataFrame,
+        stats: Iterable[str],
+        prior_weight: float,
+        weightclass_col: str = "WEIGHTCLASS",
+    ) -> pd.DataFrame:
         df = df.copy()
         df["DATE"] = _ensure_datetime(df["DATE"])
         df = df.sort_values(["DATE", "EVENT", "BOUT"]).reset_index(drop=True)
@@ -403,25 +436,47 @@ class TimeDecayFeatureEngineer:
         fighter_groups = {fighter: group for fighter, group in df.groupby("FIGHTER")}
         for idx, row in df.iterrows():
             opponent = row.get("OPPONENT")
-            if not opponent or opponent not in fighter_groups:
+            if not opponent:
                 continue
-            opponent_history = fighter_groups[opponent]
             current_date = np.datetime64(pd.to_datetime(row["DATE"]))
+            weightclass = row.get(weightclass_col)
+            opponent_history = fighter_groups.get(opponent, df.iloc[0:0])
             opponent_history = opponent_history[opponent_history["DATE"] < current_date]
-            if opponent_history.empty:
-                continue
-            past_dates = opponent_history["DATE"].to_numpy()
-            weights = decay_weights(current_date, past_dates)
+            opponent_dates = opponent_history["DATE"].to_numpy()
+            opponent_weights = decay_weights(current_date, opponent_dates)
+            opponent_weight_sum = float(np.sum(opponent_weights))
+
             for stat in stats:
                 allowed_values = opponent_history[f"{stat}_allowed"].to_numpy(dtype=float)
-                mean_allowed = weighted_average(allowed_values, weights)
-                spread_allowed = weighted_mad(allowed_values, weights)
-                if np.isnan(mean_allowed) or np.isnan(spread_allowed):
+                mean_allowed = weighted_average(allowed_values, opponent_weights)
+                spread_allowed = weighted_mad(allowed_values, opponent_weights)
+
+                if pd.isna(weightclass):
+                    prior_mean = np.nan
+                    prior_spread = np.nan
+                else:
+                    class_history = df[
+                        (df[weightclass_col] == weightclass) & (df["DATE"] < current_date)
+                    ]
+                    class_values = class_history[f"{stat}_allowed"].to_numpy(dtype=float)
+                    class_dates = class_history["DATE"].to_numpy()
+                    class_weights = decay_weights(current_date, class_dates)
+                    prior_mean = weighted_average(class_values, class_weights)
+                    prior_spread = weighted_mad(class_values, class_weights)
+
+                shrunk_mean = shrink_toward_prior(
+                    mean_allowed, opponent_weight_sum, prior_mean, prior_weight
+                )
+                shrunk_spread = shrink_toward_prior(
+                    spread_allowed, opponent_weight_sum, prior_spread, prior_weight
+                )
+
+                if np.isnan(shrunk_mean) or np.isnan(shrunk_spread):
                     continue
                 observed = row.get(stat)
                 if pd.isna(observed):
                     continue
-                adjperf = (observed - mean_allowed) / spread_allowed
+                adjperf = (observed - shrunk_mean) / max(shrunk_spread, MIN_ROBUST_SPREAD)
                 df.at[idx, f"{stat}_adjperf"] = float(
                     np.clip(adjperf, -ADJPERF_CLIP, ADJPERF_CLIP)
                 )
@@ -473,6 +528,7 @@ def run_spot_checks() -> None:
                 "BOUT": "B1",
                 "FIGHTER": "A",
                 "DATE": "2020-01-01",
+                "WEIGHTCLASS": "Lightweight",
                 "sig_str_per_min": 2.0,
                 "head_landed": 10,
                 "head_att": 20,
@@ -486,6 +542,7 @@ def run_spot_checks() -> None:
                 "BOUT": "B1",
                 "FIGHTER": "B",
                 "DATE": "2020-01-01",
+                "WEIGHTCLASS": "Lightweight",
                 "sig_str_per_min": 3.0,
                 "head_landed": 12,
                 "head_att": 24,
@@ -499,6 +556,7 @@ def run_spot_checks() -> None:
                 "BOUT": "B1.5",
                 "FIGHTER": "C",
                 "DATE": "2020-06-01",
+                "WEIGHTCLASS": "Lightweight",
                 "sig_str_per_min": 1.5,
                 "head_landed": 4,
                 "head_att": 8,
@@ -512,6 +570,7 @@ def run_spot_checks() -> None:
                 "BOUT": "B1.5",
                 "FIGHTER": "D",
                 "DATE": "2020-06-01",
+                "WEIGHTCLASS": "Lightweight",
                 "sig_str_per_min": 2.5,
                 "head_landed": 8,
                 "head_att": 10,
@@ -525,6 +584,7 @@ def run_spot_checks() -> None:
                 "BOUT": "B2",
                 "FIGHTER": "A",
                 "DATE": "2021-01-01",
+                "WEIGHTCLASS": "Lightweight",
                 "sig_str_per_min": 4.0,
                 "head_landed": 15,
                 "head_att": 30,
@@ -538,6 +598,7 @@ def run_spot_checks() -> None:
                 "BOUT": "B2",
                 "FIGHTER": "C",
                 "DATE": "2021-01-01",
+                "WEIGHTCLASS": "Lightweight",
                 "sig_str_per_min": 1.0,
                 "head_landed": 5,
                 "head_att": 10,
@@ -552,9 +613,10 @@ def run_spot_checks() -> None:
     engineer = TimeDecayFeatureEngineer()
     data = engineer.add_reach_ratio(data)
     data = engineer.add_defense_metrics(data)
-    data = engineer.add_opponent_columns(data, ["sig_str_per_min", "head_def"])
+    adjperf_stats = select_adjperf_stats(data, ["sig_str_per_min", "head_def"])
+    data = engineer.add_opponent_columns(data, adjperf_stats)
     data = engineer.add_decayed_averages(data, ["sig_str_per_min", "head_def", "reach_ratio"])
-    data = engineer.add_adjperf(data, ["sig_str_per_min", "head_def"])
+    data = engineer.add_adjperf_with_priors(data, adjperf_stats, prior_weight=5.0)
     data = engineer.add_decayed_average_differences(
         data,
         {
@@ -587,9 +649,12 @@ def run_pipeline(
 
     df = engineer.add_reach_ratio(df)
     df = engineer.add_defense_metrics(df)
-    df = engineer.add_opponent_columns(df, config.stats_for_adjperf)
+    adjperf_stats = select_adjperf_stats(df, config.stats_for_adjperf)
+    df = engineer.add_opponent_columns(df, adjperf_stats)
     df = engineer.add_decayed_averages(df, config.stats_for_decay)
-    df = engineer.add_adjperf(df, config.stats_for_adjperf)
+    df = engineer.add_adjperf_with_priors(
+        df, adjperf_stats, prior_weight=config.adjperf_prior_weight
+    )
     df = engineer.add_decayed_average_differences(df, config.diff_feature_map)
 
     stat_columns = enumerate_stat_columns(df.columns)
