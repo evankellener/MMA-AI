@@ -96,6 +96,35 @@ ADDITIONAL_EXPECTED_FEATURES = [
     "Significant Strike Landing Ratio Decayed Adjusted Performance Decayed Average Difference",
 ]
 
+NON_STAT_COLUMNS = {
+    "EVENT",
+    "BOUT",
+    "FIGHTER",
+    "OPPONENT",
+    "OUTCOME",
+    "WEIGHTCLASS",
+    "METHOD",
+    "ROUND",
+    "TIME",
+    "time_format",
+    "DATE",
+    "fighters_in_bout",
+    "STANCE",
+    "DOB",
+}
+
+
+def enumerate_stat_columns(columns: Iterable[str]) -> List[str]:
+    return [
+        col
+        for col in columns
+        if col not in NON_STAT_COLUMNS and not col.startswith("opp_")
+    ]
+
+
+def build_opponent_feature_map(stat_columns: Iterable[str]) -> Dict[str, str]:
+    return {stat: f"opp_{stat}" for stat in stat_columns}
+
 
 def load_feature_registry(registry_path: str) -> List[str]:
     with open(registry_path, "r", encoding="utf-8") as handle:
@@ -276,6 +305,21 @@ class TimeDecayFeatureEngineer:
             for stat in stats:
                 df.at[idx1, f"{stat}_allowed"] = group.iloc[1].get(stat)
                 df.at[idx2, f"{stat}_allowed"] = group.iloc[0].get(stat)
+        return df
+
+    def add_opponent_stats(
+        self, df: pd.DataFrame, feature_map: Dict[str, str]
+    ) -> pd.DataFrame:
+        df = df.copy()
+        stat_columns = list(feature_map.keys())
+        opponent_frame = df[["EVENT", "BOUT", "FIGHTER"] + stat_columns].rename(
+            columns={"FIGHTER": "OPPONENT", **feature_map}
+        )
+        df = df.merge(
+            opponent_frame,
+            on=["EVENT", "BOUT", "OPPONENT"],
+            how="left",
+        )
         return df
 
     def add_defense_metrics(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -548,7 +592,16 @@ def run_pipeline(
     df = engineer.add_adjperf(df, config.stats_for_adjperf)
     df = engineer.add_decayed_average_differences(df, config.diff_feature_map)
 
-    validate_feature_registry(df, registry_features, additional_expected_features)
+    stat_columns = enumerate_stat_columns(df.columns)
+    opponent_feature_map = build_opponent_feature_map(stat_columns)
+    df = engineer.add_opponent_stats(df, opponent_feature_map)
+    opponent_expected = list(opponent_feature_map.values())
+
+    validate_feature_registry(
+        df,
+        registry_features,
+        list(additional_expected_features) + opponent_expected,
+    )
     df.to_csv(output_csv, index=False)
     load_feature_schema(schema_path)
     export_feature_sets(df, schema_path=schema_path)
