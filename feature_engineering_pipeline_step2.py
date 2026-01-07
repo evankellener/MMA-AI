@@ -14,6 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable, Dict, List, Tuple
+import json
+from typing import Callable, Iterable, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -23,6 +25,138 @@ HALF_LIFE_YEARS = 1.5
 DECAY_LAMBDA = np.log(2.0) / HALF_LIFE_YEARS
 MIN_ROBUST_SPREAD = 1e-6
 ADJPERF_CLIP = 7.0
+
+@dataclass(frozen=True)
+class FeatureBuilder:
+    pattern: str
+    description: str
+    builder: Callable[..., pd.Series]
+
+
+FEATURE_BUILDERS: Dict[str, FeatureBuilder] = {
+    "avg_*": FeatureBuilder(
+        pattern=r"^avg_",
+        description="Expanding mean of the base stat across all prior fights.",
+        builder=lambda series: series.expanding().mean(),
+    ),
+    "recent_avg_*": FeatureBuilder(
+        pattern=r"^recent_avg_",
+        description="Rolling mean of the base stat over the most recent 3 fights.",
+        builder=lambda series: series.rolling(window=3, min_periods=1).mean(),
+    ),
+    "*_differential": FeatureBuilder(
+        pattern=r"_differential$",
+        description="Difference between fighter and opponent values.",
+        builder=lambda series, opponent: series - opponent,
+    ),
+    "*_per_min": FeatureBuilder(
+        pattern=r"_per_min$",
+        description="Normalize a cumulative stat by fight duration (minutes).",
+        builder=lambda series, minutes: series / minutes.replace(0, np.nan),
+    ),
+    "*_acc": FeatureBuilder(
+        pattern=r"_acc$",
+        description="Accuracy ratio of landed over attempted values.",
+        builder=lambda landed, attempted: landed / attempted.replace(0, np.nan),
+    ),
+    "*_def": FeatureBuilder(
+        pattern=r"_def$",
+        description="Defense metric based on opponent landing ratio.",
+        builder=lambda opp_landed, opp_attempted: 1.0
+        - (opp_landed / opp_attempted.replace(0, np.nan)),
+    ),
+    "*_peak": FeatureBuilder(
+        pattern=r"_peak$",
+        description="Peak (max) value across a fighter's history.",
+        builder=lambda series: series.expanding().max(),
+    ),
+    "precomp_change_*": FeatureBuilder(
+        pattern=r"^precomp_change_",
+        description="Change between pre-competition baseline and current value.",
+        builder=lambda series, baseline: series - baseline,
+    ),
+    "*_dec_avg": FeatureBuilder(
+        pattern=r"_dec_avg$",
+        description="Time-decayed average with exponential half-life.",
+        builder=lambda values, weights: weighted_average(values, weights),
+    ),
+    "*_adjperf": FeatureBuilder(
+        pattern=r"_adjperf$",
+        description="Opponent-adjusted performance z-score with clipping.",
+        builder=lambda observed, mean_allowed, spread: np.clip(
+            (observed - mean_allowed) / spread, -ADJPERF_CLIP, ADJPERF_CLIP
+        ),
+    ),
+}
+
+
+ADDITIONAL_EXPECTED_FEATURES = [
+    "Significant Strike Landing Ratio Decayed Adjusted Performance Decayed Average Difference",
+]
+
+
+def load_feature_registry(registry_path: str) -> List[str]:
+    with open(registry_path, "r", encoding="utf-8") as handle:
+        registry = json.load(handle)
+    required = registry.get("required_features", [])
+    if not isinstance(required, list):
+        raise ValueError("Feature registry required_features must be a list.")
+    return required
+
+
+def validate_feature_registry(
+    df: pd.DataFrame,
+    registry_features: Iterable[str],
+    additional_expected: Iterable[str] | None = None,
+) -> Tuple[List[str], List[str], List[str]]:
+    df_columns = list(df.columns)
+    registry_list = list(registry_features)
+    missing = [feature for feature in registry_list if feature not in df_columns]
+    extra = [feature for feature in df_columns if feature not in registry_list]
+    additional_expected = list(additional_expected or [])
+    missing_additional = [feature for feature in additional_expected if feature not in df_columns]
+
+    print("\n=== Feature Registry Validation ===")
+    print(f"Registry features: {len(registry_list)}")
+    print(f"Output features: {len(df_columns)}")
+    print(f"Missing features: {len(missing)}")
+    print(f"Extra features: {len(extra)}")
+    
+    # Save each list to separate files
+    with open("registry_features.txt", "w") as f:
+        f.write("\n".join(registry_list))
+    print(f"✓ Saved registry features to registry_features.txt")
+    
+    with open("output_features.txt", "w") as f:
+        f.write("\n".join(df_columns))
+    print(f"✓ Saved output features to output_features.txt")
+    
+    with open("missing_features.txt", "w") as f:
+        f.write("\n".join(missing))
+    print(f"✓ Saved missing features to missing_features.txt")
+    
+    with open("extra_features.txt", "w") as f:
+        f.write("\n".join(extra))
+    print(f"✓ Saved extra features to extra_features.txt")
+    
+    if missing:
+        print("Missing feature names:")
+        for feature in missing:
+            print(f"- {feature}")
+    if extra:
+        print("Extra feature names:")
+        for feature in extra:
+            print(f"+ {feature}")
+    print("\n=== Additional Feature Coverage ===")
+    if missing_additional:
+        print("Missing additional features:")
+        for feature in missing_additional:
+            print(f"- {feature}")
+    else:
+        print("All additional expected features are present.")
+
+    return missing, extra, missing_additional
+
 
 
 def _ensure_datetime(series: pd.Series) -> pd.Series:
@@ -397,8 +531,11 @@ def run_pipeline(
     input_csv: str = "fighter_aggregated_stats_with_advanced_features.csv",
     output_csv: str = "fighter_aggregated_stats_with_decayed_diffs.csv",
     config: FeatureConfig = DEFAULT_CONFIG,
+    registry_path: str = "feature_registry.json",
+    additional_expected_features: Iterable[str] = ADDITIONAL_EXPECTED_FEATURES,
 ) -> pd.DataFrame:
     df = pd.read_csv(input_csv)
+    registry_features = load_feature_registry(registry_path)
     engineer = TimeDecayFeatureEngineer()
 
     df = engineer.add_reach_ratio(df)
@@ -408,6 +545,7 @@ def run_pipeline(
     df = engineer.add_adjperf(df, config.stats_for_adjperf)
     df = engineer.add_decayed_average_differences(df, config.diff_feature_map)
 
+    validate_feature_registry(df, registry_features, additional_expected_features)
     df.to_csv(output_csv, index=False)
     return df
 
