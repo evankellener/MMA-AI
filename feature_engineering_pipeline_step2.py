@@ -20,6 +20,8 @@ from typing import Callable, Iterable, Dict, List, Tuple
 import numpy as np
 import pandas as pd
 
+from feature_schema import export_feature_sets, load_feature_schema
+
 
 HALF_LIFE_YEARS = 1.5
 DECAY_LAMBDA = np.log(2.0) / HALF_LIFE_YEARS
@@ -533,6 +535,7 @@ def run_pipeline(
     config: FeatureConfig = DEFAULT_CONFIG,
     registry_path: str = "feature_registry.json",
     additional_expected_features: Iterable[str] = ADDITIONAL_EXPECTED_FEATURES,
+    schema_path: str = "feature_schema.csv",
 ) -> pd.DataFrame:
     df = pd.read_csv(input_csv)
     registry_features = load_feature_registry(registry_path)
@@ -547,6 +550,8 @@ def run_pipeline(
 
     validate_feature_registry(df, registry_features, additional_expected_features)
     df.to_csv(output_csv, index=False)
+    load_feature_schema(schema_path)
+    export_feature_sets(df, schema_path=schema_path)
     return df
 
 
