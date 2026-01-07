@@ -780,74 +780,92 @@ class AdvancedAggregationsCalculator:
     
     def _add_peak_valley_features(self, df, stats):
         """Add career peak and valley (high/low) metrics for each stat."""
+        new_cols = {}
+        
         for stat in stats:
             if stat not in df.columns:
                 continue
                 
             # Calculate rolling peak (maximum over career so far)
-            df[f'{stat}_peak'] = df.groupby('FIGHTER')[stat].transform(
+            new_cols[f'{stat}_peak'] = df.groupby('FIGHTER')[stat].transform(
                 lambda x: x.expanding().max()
             )
             
             # Calculate rolling valley (minimum over career so far)
-            df[f'{stat}_valley'] = df.groupby('FIGHTER')[stat].transform(
+            new_cols[f'{stat}_valley'] = df.groupby('FIGHTER')[stat].transform(
                 lambda x: x.expanding().min()
             )
             
             # Differential from peak
-            df[f'{stat}_differential_vs_peak'] = df[stat] - df[f'{stat}_peak']
+            new_cols[f'{stat}_differential_vs_peak'] = df[stat] - new_cols[f'{stat}_peak']
             
             # Differential from valley  
-            df[f'{stat}_differential_vs_valley'] = df[stat] - df[f'{stat}_valley']
+            new_cols[f'{stat}_differential_vs_valley'] = df[stat] - new_cols[f'{stat}_valley']
+        
+        # Concatenate all new columns at once
+        if new_cols:
+            df = pd.concat([df, pd.DataFrame(new_cols, index=df.index)], axis=1)
             
         return df
     
     def _add_change_features(self, df, stats):
         """Add change/trend metrics showing performance trajectory."""
+        new_cols = {}
+        
         for stat in stats:
             if stat not in df.columns:
                 continue
             
             # Calculate average up to this point
-            df[f'{stat}_avg'] = df.groupby('FIGHTER')[stat].transform(
+            stat_avg = df.groupby('FIGHTER')[stat].transform(
                 lambda x: x.expanding().mean()
             )
+            new_cols[f'{stat}_avg'] = stat_avg
             
             # Change from career average
-            df[f'change_avg_{stat}_differential'] = df[stat] - df[f'{stat}_avg']
+            new_cols[f'change_avg_{stat}_differential'] = df[stat] - stat_avg
             
             # Previous fight value
-            df[f'{stat}_prev'] = df.groupby('FIGHTER')[stat].shift(1)
+            stat_prev = df.groupby('FIGHTER')[stat].shift(1)
             
             # Change from previous fight
-            df[f'change_{stat}_differential'] = df[stat] - df[f'{stat}_prev']
-            
-            # Remove temporary columns
-            df.drop(columns=[f'{stat}_prev'], inplace=True)
+            new_cols[f'change_{stat}_differential'] = df[stat] - stat_prev
+        
+        # Concatenate all new columns at once
+        if new_cols:
+            df = pd.concat([df, pd.DataFrame(new_cols, index=df.index)], axis=1)
             
         return df
     
     def _add_recent_vs_career_features(self, df, stats):
         """Add recent average vs career average comparisons."""
+        new_cols = {}
+        
         for stat in stats:
             if stat not in df.columns:
                 continue
             
             # Recent average (last N fights)
-            df[f'recent_avg_{stat}'] = df.groupby('FIGHTER')[stat].transform(
+            recent_avg = df.groupby('FIGHTER')[stat].transform(
                 lambda x: x.rolling(window=self.recent_threshold, min_periods=1).mean()
             )
+            new_cols[f'recent_avg_{stat}'] = recent_avg
             
             # Career average (expanding mean)
             if f'{stat}_avg' not in df.columns:
-                df[f'{stat}_avg'] = df.groupby('FIGHTER')[stat].transform(
+                stat_avg = df.groupby('FIGHTER')[stat].transform(
                     lambda x: x.expanding().mean()
                 )
+                new_cols[f'{stat}_avg'] = stat_avg
+            else:
+                stat_avg = df[f'{stat}_avg']
             
             # Differential: recent vs career
-            df[f'recent_avg_{stat}_differential'] = (
-                df[f'recent_avg_{stat}'] - df[f'{stat}_avg']
-            )
+            new_cols[f'recent_avg_{stat}_differential'] = recent_avg - stat_avg
+        
+        # Concatenate all new columns at once
+        if new_cols:
+            df = pd.concat([df, pd.DataFrame(new_cols, index=df.index)], axis=1)
             
         return df
     
@@ -862,10 +880,15 @@ class AdvancedAggregationsCalculator:
         # These would require re-aggregating from the original round-level data
         # For now, we'll create ratio columns based on existing control time
         
+        new_cols = {}
         if 'ctrl' in df.columns:
             # Assume first third of fight is "Round 1" approximation
-            df['ctrl_round1_approx'] = df['ctrl'] / 3.0
-            df['ctrl_round1_per_min_approx'] = df.get('ctrl_per_min', 0) / 3.0
+            new_cols['ctrl_round1_approx'] = df['ctrl'] / 3.0
+            new_cols['ctrl_round1_per_min_approx'] = df.get('ctrl_per_min', 0) / 3.0
+        
+        # Concatenate all new columns at once
+        if new_cols:
+            df = pd.concat([df, pd.DataFrame(new_cols, index=df.index)], axis=1)
             
         return df
     
@@ -916,24 +939,35 @@ class AdvancedAggregationsCalculator:
                 else:
                     elo_ratings[fighter] -= k_factor * 0.5  # Simplified
         
-        # Add ELO columns
-        df['elo'] = elo_values
-        df['elo_differential'] = elo_differential_values  # Placeholder
-        df['elo_peak'] = elo_peak_values
-        df['elo_valley'] = elo_valley_values
-        df['elo_differential_vs_peak'] = df['elo'] - df['elo_peak']
-        df['elo_differential_vs_valley'] = df['elo'] - df['elo_valley']
+        # Build all new columns as a dictionary
+        new_cols = {
+            'elo': elo_values,
+            'elo_differential': elo_differential_values,  # Placeholder
+            'elo_peak': elo_peak_values,
+            'elo_valley': elo_valley_values
+        }
+        
+        # Add these columns first
+        df = pd.concat([df, pd.DataFrame(new_cols, index=df.index)], axis=1)
+        
+        # Now calculate derived columns
+        additional_cols = {}
+        additional_cols['elo_differential_vs_peak'] = df['elo'] - df['elo_peak']
+        additional_cols['elo_differential_vs_valley'] = df['elo'] - df['elo_valley']
         
         # Change metrics
-        df['elo_avg'] = df.groupby('FIGHTER')['elo'].transform(lambda x: x.expanding().mean())
-        df['change_avg_elo_differential'] = df['elo'] - df['elo_avg']
-        df['change_elo_differential'] = df.groupby('FIGHTER')['elo'].diff()
+        additional_cols['elo_avg'] = df.groupby('FIGHTER')['elo'].transform(lambda x: x.expanding().mean())
+        additional_cols['change_avg_elo_differential'] = df['elo'] - additional_cols['elo_avg']
+        additional_cols['change_elo_differential'] = df.groupby('FIGHTER')['elo'].diff()
         
         # Recent ELO average
-        df['recent_avg_elo'] = df.groupby('FIGHTER')['elo'].transform(
+        additional_cols['recent_avg_elo'] = df.groupby('FIGHTER')['elo'].transform(
             lambda x: x.rolling(window=self.recent_threshold, min_periods=1).mean()
         )
-        df['change_recent_avg_elo_differential'] = df['recent_avg_elo'] - df['elo_avg']
+        additional_cols['change_recent_avg_elo_differential'] = additional_cols['recent_avg_elo'] - additional_cols['elo_avg']
+        
+        # Concatenate additional columns
+        df = pd.concat([df, pd.DataFrame(additional_cols, index=df.index)], axis=1)
         
         return df
 
