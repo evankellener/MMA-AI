@@ -19,6 +19,7 @@ from typing import Callable
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 from feature_schema import export_feature_sets, load_feature_schema
 
@@ -401,7 +402,8 @@ class TimeDecayFeatureEngineer:
         for stat in stats:
             df[f"{stat}_dec_avg"] = np.nan
 
-        for fighter, group in df.groupby("FIGHTER"):
+        fighter_groups = list(df.groupby("FIGHTER"))
+        for fighter, group in tqdm(fighter_groups, desc="Computing decayed averages"):
             indices = group.index.to_numpy()
             dates = group["DATE"].to_numpy()
             for i in range(1, len(indices)):
@@ -434,7 +436,15 @@ class TimeDecayFeatureEngineer:
             df[f"{stat}_adjperf"] = np.nan
 
         fighter_groups = {fighter: group for fighter, group in df.groupby("FIGHTER")}
-        for idx, row in df.iterrows():
+        
+        # Pre-compute weightclass groups to avoid filtering in loop
+        weightclass_groups = {}
+        if weightclass_col in df.columns:
+            for wc in df[weightclass_col].dropna().unique():
+                weightclass_groups[wc] = df[df[weightclass_col] == wc].copy()
+        
+        print(f"Processing {len(df)} rows for adjperf calculation...")
+        for idx, row in tqdm(df.iterrows(), total=len(df), desc="Computing adjperf"):
             opponent = row.get("OPPONENT")
             if not opponent:
                 continue
@@ -442,6 +452,10 @@ class TimeDecayFeatureEngineer:
             weightclass = row.get(weightclass_col)
             opponent_history = fighter_groups.get(opponent, df.iloc[0:0])
             opponent_history = opponent_history[opponent_history["DATE"] < current_date]
+            
+            if opponent_history.empty:
+                continue
+                
             opponent_dates = opponent_history["DATE"].to_numpy()
             opponent_weights = decay_weights(current_date, opponent_dates)
             opponent_weight_sum = float(np.sum(opponent_weights))
@@ -451,18 +465,23 @@ class TimeDecayFeatureEngineer:
                 mean_allowed = weighted_average(allowed_values, opponent_weights)
                 spread_allowed = weighted_mad(allowed_values, opponent_weights)
 
-                if pd.isna(weightclass):
+                if pd.isna(weightclass) or weightclass not in weightclass_groups:
                     prior_mean = np.nan
                     prior_spread = np.nan
                 else:
-                    class_history = df[
-                        (df[weightclass_col] == weightclass) & (df["DATE"] < current_date)
+                    # Use pre-computed weightclass group and filter by date only
+                    class_history = weightclass_groups[weightclass][
+                        weightclass_groups[weightclass]["DATE"] < current_date
                     ]
-                    class_values = class_history[f"{stat}_allowed"].to_numpy(dtype=float)
-                    class_dates = class_history["DATE"].to_numpy()
-                    class_weights = decay_weights(current_date, class_dates)
-                    prior_mean = weighted_average(class_values, class_weights)
-                    prior_spread = weighted_mad(class_values, class_weights)
+                    if not class_history.empty and f"{stat}_allowed" in class_history.columns:
+                        class_values = class_history[f"{stat}_allowed"].to_numpy(dtype=float)
+                        class_dates = class_history["DATE"].to_numpy()
+                        class_weights = decay_weights(current_date, class_dates)
+                        prior_mean = weighted_average(class_values, class_weights)
+                        prior_spread = weighted_mad(class_values, class_weights)
+                    else:
+                        prior_mean = np.nan
+                        prior_spread = np.nan
 
                 shrunk_mean = shrink_toward_prior(
                     mean_allowed, opponent_weight_sum, prior_mean, prior_weight
@@ -489,7 +508,7 @@ class TimeDecayFeatureEngineer:
         df = df.sort_values(["DATE", "EVENT", "BOUT"]).reset_index(drop=True)
         opponent_lookup = df.set_index(["EVENT", "BOUT", "FIGHTER"]).sort_index()
 
-        for stat, feature_name in feature_map.items():
+        for stat, feature_name in tqdm(feature_map.items(), desc="Computing differences"):
             df[feature_name] = np.nan
             for idx, row in df.iterrows():
                 opponent = row.get("OPPONENT")
@@ -643,33 +662,53 @@ def run_pipeline(
     additional_expected_features: Iterable[str] = ADDITIONAL_EXPECTED_FEATURES,
     schema_path: str = "feature_schema.csv",
 ) -> pd.DataFrame:
+    print(f"Loading data from {input_csv}...")
     df = pd.read_csv(input_csv)
+    print(f"Loaded {len(df)} rows, {len(df.columns)} columns")
+    
     registry_features = load_feature_registry(registry_path)
     engineer = TimeDecayFeatureEngineer()
 
+    print("\nStep 1: Adding reach ratio and defense metrics...")
     df = engineer.add_reach_ratio(df)
     df = engineer.add_defense_metrics(df)
+    
+    print("Step 2: Setting up opponent columns...")
     adjperf_stats = select_adjperf_stats(df, config.stats_for_adjperf)
     df = engineer.add_opponent_columns(df, adjperf_stats)
+    
+    print("Step 3: Computing decayed averages...")
     df = engineer.add_decayed_averages(df, config.stats_for_decay)
+    
+    print("Step 4: Computing adjperf (this may take a while)...")
     df = engineer.add_adjperf_with_priors(
         df, adjperf_stats, prior_weight=config.adjperf_prior_weight
     )
+    
+    print("Step 5: Computing decayed average differences...")
     df = engineer.add_decayed_average_differences(df, config.diff_feature_map)
 
+    print("Step 6: Adding opponent stats...")
     stat_columns = enumerate_stat_columns(df.columns)
     opponent_feature_map = build_opponent_feature_map(stat_columns)
     df = engineer.add_opponent_stats(df, opponent_feature_map)
     opponent_expected = list(opponent_feature_map.values())
 
+    print("Step 7: Validating feature registry...")
     validate_feature_registry(
         df,
         registry_features,
         list(additional_expected_features) + opponent_expected,
     )
+    
+    print(f"Step 8: Saving to {output_csv}...")
     df.to_csv(output_csv, index=False)
+    
+    print("Step 9: Exporting feature schema...")
     load_feature_schema(schema_path)
     export_feature_sets(df, schema_path=schema_path)
+    
+    print("\n✓ Pipeline complete!")
     return df
 
 
