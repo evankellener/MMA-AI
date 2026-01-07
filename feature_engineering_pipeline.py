@@ -784,19 +784,21 @@ class AdvancedAggregationsCalculator:
                 continue
                 
             # Calculate rolling peak (maximum over career so far)
+            # IMPORTANT: Use shift(1) to exclude current fight from aggregation (prevents data leakage)
             new_cols[f'{stat}_peak'] = df.groupby('FIGHTER')[stat].transform(
-                lambda x: x.expanding().max()
+                lambda x: x.shift(1).expanding().max()
             )
             
             # Calculate rolling valley (minimum over career so far)
+            # IMPORTANT: Use shift(1) to exclude current fight from aggregation (prevents data leakage)
             new_cols[f'{stat}_valley'] = df.groupby('FIGHTER')[stat].transform(
-                lambda x: x.expanding().min()
+                lambda x: x.shift(1).expanding().min()
             )
             
-            # Differential from peak
+            # Differential from peak (comparing current to previous peak)
             new_cols[f'{stat}_differential_vs_peak'] = df[stat] - new_cols[f'{stat}_peak']
             
-            # Differential from valley  
+            # Differential from valley (comparing current to previous valley)
             new_cols[f'{stat}_differential_vs_valley'] = df[stat] - new_cols[f'{stat}_valley']
         
         # Concatenate all new columns at once
@@ -813,13 +815,14 @@ class AdvancedAggregationsCalculator:
             if stat not in df.columns:
                 continue
             
-            # Calculate average up to this point
+            # Calculate average up to (but not including) this point
+            # IMPORTANT: Use shift(1) to exclude current fight from aggregation (prevents data leakage)
             stat_avg = df.groupby('FIGHTER')[stat].transform(
-                lambda x: x.expanding().mean()
+                lambda x: x.shift(1).expanding().mean()
             )
             new_cols[f'{stat}_avg'] = stat_avg
             
-            # Change from career average
+            # Change from career average (comparing current to previous average)
             new_cols[f'change_avg_{stat}_differential'] = df[stat] - stat_avg
             
             # Previous fight value
@@ -842,16 +845,18 @@ class AdvancedAggregationsCalculator:
             if stat not in df.columns:
                 continue
             
-            # Recent average (last N fights)
+            # Recent average (last N fights, excluding current)
+            # IMPORTANT: Use shift(1) to exclude current fight from aggregation (prevents data leakage)
             recent_avg = df.groupby('FIGHTER')[stat].transform(
-                lambda x: x.rolling(window=self.recent_threshold, min_periods=1).mean()
+                lambda x: x.shift(1).rolling(window=self.recent_threshold, min_periods=1).mean()
             )
             new_cols[f'recent_avg_{stat}'] = recent_avg
             
-            # Career average (expanding mean)
+            # Career average (expanding mean, excluding current)
+            # Use the _avg column if it exists (already shifted), otherwise calculate it
             if f'{stat}_avg' not in df.columns:
                 stat_avg = df.groupby('FIGHTER')[stat].transform(
-                    lambda x: x.expanding().mean()
+                    lambda x: x.shift(1).expanding().mean()
                 )
                 new_cols[f'{stat}_avg'] = stat_avg
             else:
