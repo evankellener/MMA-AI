@@ -20,3 +20,12 @@ ENV/
 .DS_Store
 Thumbs.db
 
+# Model files (can be large)
+models/
+*.pkl
+*.joblib
+
+# Temporary files
+temp_*.csv
+*.tmp
+
