@@ -1080,6 +1080,152 @@ class OpponentAdjustedPerformanceCalculator:
         return df
 
 
+class FeatureSelector:
+    """Selects the most predictive features for modeling."""
+    
+    def __init__(self):
+        """Initialize feature selector."""
+        pass
+    
+    def select_features(self, matchup_df, target_col='fighter1_win', n_features=30):
+        """
+        Select the most predictive features using multiple methods.
+        
+        Args:
+            matchup_df: DataFrame with all matchup features
+            target_col: Target variable column name
+            n_features: Number of features to select
+            
+        Returns:
+            DataFrame with selected features and metadata
+        """
+        print("\n" + "=" * 60)
+        print("Step 6: Feature Selection")
+        print("=" * 60)
+        print(f"Input features: {len(matchup_df.columns)}")
+        print(f"Target features: {n_features}")
+        
+        # Identify metadata and feature columns
+        metadata_cols = ['EVENT', 'BOUT', 'DATE', 'OUTCOME', 'WEIGHTCLASS', 'METHOD', 
+                        'fighter1_name', 'fighter2_name', target_col]
+        
+        # Get all feature columns (numeric columns excluding metadata and target)
+        feature_cols = [col for col in matchup_df.columns 
+                       if col not in metadata_cols 
+                       and matchup_df[col].dtype in ['int64', 'float64']]
+        
+        print(f"\nNumeric feature columns: {len(feature_cols)}")
+        
+        # Filter to rows with valid target values
+        valid_df = matchup_df[matchup_df[target_col].notna()].copy()
+        print(f"Rows with valid target: {len(valid_df)}")
+        
+        # Extract features and target
+        X = valid_df[feature_cols].fillna(0)  # Fill NaN with 0 for feature selection
+        y = valid_df[target_col].astype(int)
+        
+        print(f"\nFeature matrix shape: {X.shape}")
+        print(f"Target distribution: {y.value_counts().to_dict()}")
+        
+        # Method 1: Mutual Information
+        print("\n=== Method 1: Mutual Information ===")
+        from sklearn.feature_selection import mutual_info_classif
+        
+        mi_scores = mutual_info_classif(X, y, random_state=42)
+        mi_scores_df = pd.DataFrame({
+            'feature': feature_cols,
+            'mi_score': mi_scores
+        }).sort_values('mi_score', ascending=False)
+        
+        print(f"Top 10 features by Mutual Information:")
+        for idx, row in mi_scores_df.head(10).iterrows():
+            print(f"  {row['feature']}: {row['mi_score']:.4f}")
+        
+        # Method 2: Variance Threshold (remove low-variance features)
+        print("\n=== Method 2: Variance Filtering ===")
+        from sklearn.feature_selection import VarianceThreshold
+        
+        var_selector = VarianceThreshold(threshold=0.01)  # Remove very low variance
+        var_selector.fit(X)
+        high_var_features = [feature_cols[i] for i in range(len(feature_cols)) 
+                            if var_selector.get_support()[i]]
+        
+        print(f"Features with variance > 0.01: {len(high_var_features)}")
+        
+        # Method 3: Correlation-based selection
+        print("\n=== Method 3: Target Correlation ===")
+        correlations = X.corrwith(y).abs()
+        corr_df = pd.DataFrame({
+            'feature': feature_cols,
+            'correlation': correlations.values
+        }).sort_values('correlation', ascending=False)
+        
+        print(f"Top 10 features by correlation:")
+        for idx, row in corr_df.head(10).iterrows():
+            print(f"  {row['feature']}: {row['correlation']:.4f}")
+        
+        # Combine methods: Select top features from each method
+        print("\n=== Combining Selection Methods ===")
+        
+        # Top N from MI
+        top_mi = set(mi_scores_df.head(n_features * 2).feature.tolist())
+        
+        # Top N from correlation  
+        top_corr = set(corr_df.head(n_features * 2).feature.tolist())
+        
+        # Intersection of high-variance and top features
+        candidate_features = list((top_mi | top_corr) & set(high_var_features))
+        
+        print(f"Candidate features after combining methods: {len(candidate_features)}")
+        
+        # Rank by average of normalized MI and correlation scores
+        # Normalize scores to 0-1 range
+        mi_scores_norm = (mi_scores_df.set_index('feature')['mi_score'] - mi_scores_df['mi_score'].min()) / \
+                        (mi_scores_df['mi_score'].max() - mi_scores_df['mi_score'].min())
+        corr_norm = (corr_df.set_index('feature')['correlation'] - corr_df['correlation'].min()) / \
+                   (corr_df['correlation'].max() - corr_df['correlation'].min())
+        
+        # Calculate combined score for candidates
+        combined_scores = []
+        for feat in candidate_features:
+            mi_val = mi_scores_norm.get(feat, 0)
+            corr_val = corr_norm.get(feat, 0)
+            combined_score = (mi_val + corr_val) / 2
+            combined_scores.append({
+                'feature': feat,
+                'mi_score': mi_scores_df[mi_scores_df.feature == feat]['mi_score'].values[0],
+                'correlation': corr_df[corr_df.feature == feat]['correlation'].values[0],
+                'combined_score': combined_score
+            })
+        
+        combined_df = pd.DataFrame(combined_scores).sort_values('combined_score', ascending=False)
+        
+        # Select top N features
+        selected_features = combined_df.head(n_features).feature.tolist()
+        
+        print(f"\n=== Selected {len(selected_features)} Features ===")
+        for idx, row in combined_df.head(n_features).iterrows():
+            print(f"  {row['feature']}: "
+                  f"MI={row['mi_score']:.4f}, "
+                  f"Corr={row['correlation']:.4f}, "
+                  f"Combined={row['combined_score']:.4f}")
+        
+        # Create output dataframe with selected features
+        output_cols = metadata_cols + selected_features
+        output_df = matchup_df[output_cols].copy()
+        
+        # Save feature importance rankings
+        feature_rankings_file = 'feature_rankings.csv'
+        combined_df.to_csv(feature_rankings_file, index=False)
+        print(f"\n✓ Saved feature rankings to: {feature_rankings_file}")
+        
+        print(f"\n✓ Step 6 Complete: Feature selection finished")
+        print(f"  Selected features: {len(selected_features)}")
+        print(f"  Output columns (with metadata): {len(output_cols)}")
+        
+        return output_df, selected_features
+
+
 class MatchupComparisons:
     """Creates comparative features between two fighters in a matchup."""
     
@@ -1352,19 +1498,31 @@ def main():
         print(f"    • Difference features (diff_*): Fighter1 - Fighter2")
         print(f"    • Ratio features (ratio_*): Fighter1 / Fighter2")
         
-        # Step 6: Print summary
+        # Step 6: Feature selection
+        selector = FeatureSelector()
+        selected_df, selected_features = selector.select_features(matchup_df, target_col='fighter1_win', n_features=30)
+        
+        # Save selected features dataset
+        selected_output_file = 'matchup_selected_features.csv'
+        selected_df.to_csv(selected_output_file, index=False)
+        print(f"\n✓ Saved selected features dataset to: {selected_output_file}")
+        print(f"  - Total matchups: {len(selected_df)}")
+        print(f"  - Selected features: {len(selected_features)}")
+        print(f"  - Total columns (with metadata): {len(selected_df.columns)}")
+        
+        # Step 7: Print summary
         aggregator.print_summary_statistics()
         
-        # Step 7: Print filtering report
+        # Step 8: Print filtering report
         aggregator.print_filtering_report()
         
         print("\n" + "=" * 60)
-        print("✓ Steps 1-5 completed successfully!")
+        print("✓ Steps 1-6 completed successfully!")
         print("=" * 60)
         print(f"Fighter-level features: ~{len(aggregator.fighter_level_stats.columns)} columns")
-        print(f"Matchup-level features: ~{len(matchup_df.columns)} columns")
-        print(f"\nNext steps:")
-        print("  Step 6: Feature selection to identify ~30 most predictive features")
+        print(f"Matchup-level features (all): ~{len(matchup_df.columns)} columns")
+        print(f"Matchup-level features (selected): {len(selected_features)} columns")
+        print(f"\nNext step:")
         print("  Step 7: Model training with AutoGluon")
         print(f"\nTarget: 71% accuracy, 0.602 log loss, 0.207 Brier score")
         
