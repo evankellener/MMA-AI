@@ -9,9 +9,11 @@ from typing import Dict, Iterable, List, Tuple
 PRECOMP_METADATA = {
     "age",
     "date",
+    "bout",
     "days_since_last_comp",
     "division",
     "dob",
+    "event",
     "event_url",
     "fight_url",
     "fighter",
@@ -24,6 +26,7 @@ PRECOMP_METADATA = {
     "time_format",
     "title_fight",
     "weight",
+    "weightclass",
 }
 
 
@@ -51,6 +54,7 @@ def load_canonical_features(
 
 
 def classify_feature(feature_name: str) -> str:
+    feature_name = feature_name.lower()
     if feature_name.startswith("precomp_"):
         return "precomp"
     if feature_name in PRECOMP_METADATA:
@@ -86,9 +90,23 @@ def load_feature_schema(schema_path: str = "feature_schema.csv") -> Dict[str, st
         return {row["feature"]: row["timing"] for row in reader}
 
 
+def resolve_feature_timing(feature_name: str, schema_map: Dict[str, str]) -> str:
+    if feature_name in schema_map:
+        return schema_map[feature_name]
+    lower_name = feature_name.lower()
+    if lower_name in schema_map:
+        return schema_map[lower_name]
+    if lower_name.startswith("opp_"):
+        base_name = lower_name.removeprefix("opp_")
+        if base_name in schema_map:
+            return schema_map[base_name]
+    return classify_feature(lower_name)
+
+
 def split_dataframe_by_schema(df, schema_map: Dict[str, str]):
-    precomp_cols = [col for col in df.columns if schema_map.get(col) == "precomp"]
-    postcomp_cols = [col for col in df.columns if schema_map.get(col) == "postcomp"]
+    timings = {col: resolve_feature_timing(col, schema_map) for col in df.columns}
+    precomp_cols = [col for col, timing in timings.items() if timing == "precomp"]
+    postcomp_cols = [col for col, timing in timings.items() if timing == "postcomp"]
     precomp_df = df[precomp_cols].copy()
     postcomp_df = df[postcomp_cols].copy()
     return precomp_df, postcomp_df
