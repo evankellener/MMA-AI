@@ -151,7 +151,7 @@ def train_autogluon_model(train_df, val_df, feature_cols, target_col, time_limit
     print(f"✓ Time limit: {time_limit} seconds")
     print(f"✓ Evaluation metric: log_loss")
     
-    # Train with error handling
+    # Train with error handling - use verbosity=0 to avoid Mac GPU detection crash
     try:
         predictor = TabularPredictor(
             label=target_col,
@@ -162,7 +162,7 @@ def train_autogluon_model(train_df, val_df, feature_cols, target_col, time_limit
             time_limit=time_limit,
             presets='best_quality',
             num_gpus=0,  # Disable GPU to avoid detection issues
-            verbosity=2
+            verbosity=0  # Reduced verbosity to avoid Mac GPU detection crash
         )
         
         print(f"\n✓ Model trained successfully")
@@ -184,7 +184,7 @@ def train_autogluon_model(train_df, val_df, feature_cols, target_col, time_limit
                 time_limit=time_limit,
                 presets='medium_quality',
                 num_gpus=0,
-                verbosity=2
+                verbosity=0
             )
             
             print(f"\n✓ Model trained successfully with fallback preset")
