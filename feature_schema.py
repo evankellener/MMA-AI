@@ -54,11 +54,57 @@ def load_canonical_features(
 
 
 def classify_feature(feature_name: str) -> str:
-    feature_name = feature_name.lower()
-    if feature_name.startswith("precomp_"):
+    """
+    Classify a feature as precomp (pre-competition) or postcomp (post-competition).
+    
+    Precomp features are available before a fight and can be used for prediction.
+    Postcomp features contain information about the fight outcome and should only
+    be used for analysis or inference after the fight.
+    
+    Args:
+        feature_name: Name of the feature to classify
+        
+    Returns:
+        'precomp' or 'postcomp'
+    """
+    feature_name_lower = feature_name.lower()
+    
+    # Explicit precomp prefix
+    if feature_name_lower.startswith("precomp_"):
         return "precomp"
     if feature_name in PRECOMP_METADATA:
         return "precomp"
+    # Postcomp indicators - features that reveal fight outcomes
+    postcomp_keywords = [
+        'win', 'loss', 'result', 'outcome', 
+        'ko', 'decision',  # Removed 'submission' here - it's ambiguous
+        'win_streak', 'lose_streak', 'win_loss_ratio'
+    ]
+    
+    # Check if feature name contains postcomp keywords
+    for keyword in postcomp_keywords:
+        if keyword in feature_name_lower:
+            return "postcomp"
+    
+    # Statistical features from past fights are precomp
+    # These include: strikes, takedowns, control, adjperf, dec_avg, etc.
+    precomp_indicators = [
+        'sig_str', 'total_str', 'head', 'body', 'leg',
+        'distance', 'clinch', 'ground', 'takedown', 'td_',
+        'sub_att', 'sub_attempt', 'submission_att',  # More specific: attempt features
+        'reversal', 'rev_',
+        'control', 'ctrl', 'knockdown', 'kd',
+        'adjperf', 'dec_avg', '_per_min', '_acc', '_def',
+        'absorbed', 'landed', 'attempted', 'att',
+        'age', 'reach', 'height', 'weight', 'stance',
+        'days_since', 'num_fights', 'fight_count'
+    ]
+    
+    for indicator in precomp_indicators:
+        if indicator in feature_name_lower:
+            return "precomp"
+    
+    # Default to postcomp for safety (avoids leaking info)
     return "postcomp"
 
 
@@ -113,12 +159,17 @@ def split_dataframe_by_schema(df, schema_map: Dict[str, str]):
 
 
 def validate_precomp_export(precomp_columns: Iterable[str], schema_map: Dict[str, str]):
-    invalid = [col for col in precomp_columns if schema_map.get(col) != "precomp"]
+    invalid = [
+        col
+        for col in precomp_columns
+        if resolve_feature_timing(col, schema_map) != "precomp"
+    ]
     if invalid:
         raise ValueError(
             "Precomp export includes postcomp-only features: "
             + ", ".join(sorted(invalid))
         )
+
 
 
 def export_feature_sets(

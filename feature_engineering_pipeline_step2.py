@@ -174,12 +174,16 @@ def validate_feature_registry(
     
     if missing:
         print("Missing feature names:")
+        """
         for feature in missing:
             print(f"- {feature}")
+        """
     if extra:
+        """
         print("Extra feature names:")
         for feature in extra:
             print(f"+ {feature}")
+        """
     print("\n=== Additional Feature Coverage ===")
     if missing_additional:
         print("Missing additional features:")
