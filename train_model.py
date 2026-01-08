@@ -151,8 +151,10 @@ def train_autogluon_model(train_df, val_df, feature_cols, target_col, time_limit
     print(f"✓ Time limit: {time_limit} seconds")
     print(f"✓ Evaluation metric: log_loss")
     
-    # Train with error handling - use verbosity=0 to avoid Mac GPU detection crash
+    # Train with error handling
+    # Use verbosity=1 for minimal output (avoids Mac GPU detection crash from verbosity=2+)
     try:
+        print("Starting AutoGluon training with best_quality preset...")
         predictor = TabularPredictor(
             label=target_col,
             eval_metric='log_loss',
@@ -162,7 +164,8 @@ def train_autogluon_model(train_df, val_df, feature_cols, target_col, time_limit
             time_limit=time_limit,
             presets='best_quality',
             num_gpus=0,  # Disable GPU to avoid detection issues
-            verbosity=0  # Reduced verbosity to avoid Mac GPU detection crash
+            verbosity=1,  # Minimal output - avoids Mac GPU crash while showing progress
+            ag_args_fit={'num_cpus': 'auto'}
         )
         
         print(f"\n✓ Model trained successfully")
@@ -171,7 +174,7 @@ def train_autogluon_model(train_df, val_df, feature_cols, target_col, time_limit
         return predictor
     
     except Exception as e:
-        print(f"\n✗ Error during training: {e}")
+        print(f"\n✗ Error during training with best_quality: {str(e)[:200]}")
         print("\nTrying with 'medium_quality' preset instead...")
         
         try:
@@ -184,7 +187,8 @@ def train_autogluon_model(train_df, val_df, feature_cols, target_col, time_limit
                 time_limit=time_limit,
                 presets='medium_quality',
                 num_gpus=0,
-                verbosity=0
+                verbosity=1,
+                ag_args_fit={'num_cpus': 'auto'}
             )
             
             print(f"\n✓ Model trained successfully with fallback preset")
@@ -193,12 +197,35 @@ def train_autogluon_model(train_df, val_df, feature_cols, target_col, time_limit
             return predictor
         
         except Exception as e2:
-            print(f"\n✗ Training failed: {e2}")
-            print("\nPlease check:")
-            print("  1. AutoGluon is properly installed")
-            print("  2. Sufficient memory is available")
-            print("  3. Data format is correct")
-            return None
+            print(f"\n✗ Training failed with medium_quality: {str(e2)[:200]}")
+            print("\nTrying with 'good_quality' (fast) preset...")
+            
+            try:
+                predictor = TabularPredictor(
+                    label=target_col,
+                    eval_metric='log_loss',
+                    path='./autogluon_models_fast'
+                ).fit(
+                    combined_data,
+                    time_limit=time_limit,
+                    presets='good_quality',
+                    num_gpus=0,
+                    verbosity=1
+                )
+                
+                print(f"\n✓ Model trained successfully with fast preset")
+                print(f"✓ Best model: {predictor.get_model_best()}")
+                
+                return predictor
+            
+            except Exception as e3:
+                print(f"\n✗ All training attempts failed: {str(e3)[:200]}")
+                print("\nPlease check:")
+                print("  1. AutoGluon is properly installed: pip install autogluon")
+                print("  2. Sufficient memory is available (requires ~2GB)")
+                print("  3. Data format is correct (no infinite/NaN values)")
+                print("  4. Python version compatibility (3.8-3.11 recommended)")
+                return None
 
 
 def evaluate_model(predictor, test_df, feature_cols, target_col):
