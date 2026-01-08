@@ -238,6 +238,27 @@ The transformation from base statistics to final features:
 ~30 final predictive features
 ```
 
+### 5. **Precomp vs. Postcomp Features**
+
+A critical distinction for valid model training:
+
+**Precomp (Pre-Competition) Features:**
+- Available BEFORE a fight starts
+- Based on historical fight statistics
+- Can be used for prediction models
+- Examples: `diff_sig_str_per_min_adjperf`, `f1_td_acc_dec_avg`, `ratio_ctrl_per_min`
+- **Count:** ~1,019 features in matchup dataset
+
+**Postcomp (Post-Competition) Features:**
+- Contain information about fight outcomes
+- Include win/loss records, results
+- Should NOT be used for training (data leakage)
+- Can be used for analysis or inference after fights
+- Examples: `fighter1_win`, `diff_change_avg_win_differential`, `f1_win_avg`
+- **Count:** ~60 features in matchup dataset
+
+**Important:** The original `matchup_selected_features.csv` was dominated by postcomp "win" features (30 out of 39 columns), making it unsuitable for training a prediction model. The feature selection has been updated to only select from precomp features, and separate precomp/postcomp CSV files are now generated.
+
 ---
 
 ## Data Files Overview
@@ -247,10 +268,12 @@ The transformation from base statistics to final features:
 | `sqlite_scrapper.db` | 26 MB | Source UFC data database |
 | `fighter_aggregated_stats_with_advanced_features.csv` | 48 MB | Step 1 output: aggregated fighter stats |
 | `fighter_aggregated_stats_with_decayed_diffs.csv` | 120 MB | Step 2 output: time-decayed features |
-| `matchup_comparisons.csv` | 93 MB | Step 4 output: all comparative features |
-| `matchup_selected_features.csv` | 3.1 MB | Step 5 output: selected features only |
+| `matchup_comparisons.csv` | 93 MB | Step 4 output: all comparative features (1,019 precomp + 60 postcomp) |
+| `matchup_selected_features.csv` | 3.1 MB | Step 5 output: selected features (precomp only) |
+| `matchup_selected_features_precomp.csv` | - | Precomp features only (for model training) |
+| `matchup_selected_features_postcomp.csv` | - | Postcomp features only (for analysis/inference) |
 | `feature_registry.json` | 991 KB | Feature definitions and metadata |
-| `feature_schema.csv` | 974 KB | Feature timing classifications |
+| `feature_schema.csv` | 974 KB | Feature timing classifications (precomp/postcomp) |
 | `feature_rankings.csv` | 6.7 KB | Ranked features by importance |
 | `masterMLpublic100.csv.csv` | 8.5 MB | Master training dataset |
 | `mma_ai.md` | 162 KB | Comprehensive methodology documentation |
@@ -442,8 +465,8 @@ python OCR_script.py
 1. **Add Unit Tests:** Test critical statistical functions (adjperf, decay, shrinkage)
 2. **Pin Dependency Versions:** Update `requirements.txt` with specific pinned versions for reproducibility
 3. **Data Validation:** Add schema validation for database queries and CSV outputs
-4. **Performance Optimization:** Consider using parquet format for large datasets
-5. **Error Handling:** Add try-except blocks for database operations and file I/O
+4. **Error Handling:** Add try-except blocks for database operations and file I/O
+5. **Performance Optimization:** Consider using parquet format for large datasets
 
 ### Medium Priority
 6. **Continuous Integration:** Add CI/CD pipeline for automated testing
