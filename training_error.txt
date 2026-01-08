@@ -1,0 +1,90 @@
+(venv) evankellener@Evans-MacBook-Pro MMA-AI % python train_model.py
+
+======================================================================
+MMA FIGHT PREDICTION MODEL TRAINING
+======================================================================
+Start time: 2026-01-08 14:06:46
+======================================================================
+LOADING DATA
+======================================================================
+✓ Loaded 8471 fights from matchup_selected_features.csv
+✓ Columns: 39
+✓ Date range: 1994-03-11 to 2025-12-13
+
+======================================================================
+PREPARING FEATURES
+======================================================================
+✓ Feature columns: 30
+✓ Target column: fighter1_win
+✓ Missing values in features: 1944
+
+✓ Target distribution:
+  fighter1_win = 1: 5326 (62.9%)
+  fighter1_win = 0: 3118 (36.8%)
+
+======================================================================
+TEMPORAL TRAIN/VAL/TEST SPLIT
+======================================================================
+✓ Total fights: 8471
+
+✓ Train set: 6098 fights (72.0%)
+  Date range: 1994-03-11 to 2021-05-22
+
+✓ Validation set: 678 fights (8.0%)
+  Date range: 2021-05-22 to 2022-09-10
+
+✓ Test set: 1695 fights (20.0%)
+  Date range: 2022-09-10 to 2025-12-13
+
+======================================================================
+TRAINING AUTOGLUON MODEL
+======================================================================
+⚠ Filling 1765 missing values with 0
+✓ Training data: 6776 fights
+✓ Time limit: 300 seconds
+✓ Evaluation metric: log_loss
+Starting AutoGluon training with best_quality preset...
+Warning: path already exists! This predictor may overwrite an existing predictor! path="./autogluon_models"
+2026-01-08 14:06:50,982 INFO worker.py:2014 -- Started a local Ray instance. View the dashboard at http://127.0.0.1:8265 
+/Users/evankellener/Desktop/MMA-AI/venv/lib/python3.13/site-packages/ray/_private/worker.py:2062: FutureWarning: Tip: In future versions of Ray, Ray will no longer override accelerator visible devices env var if num_gpus=0 or num_gpus=None (default). To enable this behavior and turn off this error message, set RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
+  warnings.warn(
+
+✗ Error during training with best_quality: ray::_dystack() (pid=51737, ip=127.0.0.1)
+  File "/Users/evankellener/Desktop/MMA-AI/venv/lib/python3.13/site-packages/autogluon/tabular/predictor/predictor.py", line 5860, in _dystack
+    t
+
+Trying with 'medium_quality' preset instead...
+Warning: path already exists! This predictor may overwrite an existing predictor! path="./autogluon_models_fallback"
+AutoGluon infers your prediction problem is: 'binary' (because only two unique label-values observed).
+        If 'binary' is not the correct problem_type, please manually specify the problem_type parameter during Predictor init (You may specify problem_type as one of: ['binary', 'multiclass', 'regression', 'quantile'])
+
+✗ Training failed with medium_quality: train dataset label column cannot contain non-finite values (NaN, Inf, Ninf). First invalid label at data idx: 32
+
+Trying with 'good_quality' (fast) preset...
+Warning: path already exists! This predictor may overwrite an existing predictor! path="./autogluon_models_fast"
+
+✗ All training attempts failed: ray::_dystack() (pid=51744, ip=127.0.0.1)
+  File "/Users/evankellener/Desktop/MMA-AI/venv/lib/python3.13/site-packages/autogluon/tabular/predictor/predictor.py", line 5860, in _dystack
+    t
+
+Please check:
+  1. AutoGluon is properly installed: pip install autogluon
+  2. Sufficient memory is available (requires ~2GB)
+  3. Data format is correct (no infinite/NaN values)
+  4. Python version compatibility (3.8-3.11 recommended)
+
+======================================================================
+MODEL EVALUATION
+======================================================================
+✗ No model to evaluate
+
+======================================================================
+FEATURE IMPORTANCE ANALYSIS
+======================================================================
+✗ No model to analyze
+
+======================================================================
+✓ TRAINING COMPLETE
+======================================================================
+End time: 2026-01-08 14:06:54
+(venv) evankellener@Evans-MacBook-Pro MMA-AI % 
