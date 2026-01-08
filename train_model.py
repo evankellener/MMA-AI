@@ -141,26 +141,64 @@ def train_autogluon_model(train_df, val_df, feature_cols, target_col, time_limit
     # Combine train and val for AutoGluon (it will handle internal validation)
     combined_data = pd.concat([train_data, val_data], ignore_index=True)
     
+    # Handle missing values - fill with 0 (reasonable for fighter stats)
+    missing_before = combined_data[feature_cols].isnull().sum().sum()
+    if missing_before > 0:
+        print(f"⚠ Filling {missing_before} missing values with 0")
+        combined_data[feature_cols] = combined_data[feature_cols].fillna(0)
+    
     print(f"✓ Training data: {len(combined_data)} fights")
     print(f"✓ Time limit: {time_limit} seconds")
     print(f"✓ Evaluation metric: log_loss")
     
-    # Train
-    predictor = TabularPredictor(
-        label=target_col,
-        eval_metric='log_loss',
-        path='./autogluon_models'
-    ).fit(
-        combined_data,
-        time_limit=time_limit,
-        presets='best_quality',
-        verbosity=2
-    )
+    # Train with error handling
+    try:
+        predictor = TabularPredictor(
+            label=target_col,
+            eval_metric='log_loss',
+            path='./autogluon_models'
+        ).fit(
+            combined_data,
+            time_limit=time_limit,
+            presets='best_quality',
+            num_gpus=0,  # Disable GPU to avoid detection issues
+            verbosity=2
+        )
+        
+        print(f"\n✓ Model trained successfully")
+        print(f"✓ Best model: {predictor.get_model_best()}")
+        
+        return predictor
     
-    print(f"\n✓ Model trained successfully")
-    print(f"✓ Best model: {predictor.get_model_best()}")
-    
-    return predictor
+    except Exception as e:
+        print(f"\n✗ Error during training: {e}")
+        print("\nTrying with 'medium_quality' preset instead...")
+        
+        try:
+            predictor = TabularPredictor(
+                label=target_col,
+                eval_metric='log_loss',
+                path='./autogluon_models_fallback'
+            ).fit(
+                combined_data,
+                time_limit=time_limit,
+                presets='medium_quality',
+                num_gpus=0,
+                verbosity=2
+            )
+            
+            print(f"\n✓ Model trained successfully with fallback preset")
+            print(f"✓ Best model: {predictor.get_model_best()}")
+            
+            return predictor
+        
+        except Exception as e2:
+            print(f"\n✗ Training failed: {e2}")
+            print("\nPlease check:")
+            print("  1. AutoGluon is properly installed")
+            print("  2. Sufficient memory is available")
+            print("  3. Data format is correct")
+            return None
 
 
 def evaluate_model(predictor, test_df, feature_cols, target_col):
@@ -186,6 +224,12 @@ def evaluate_model(predictor, test_df, feature_cols, target_col):
     
     # Prepare test data
     test_data = test_df[feature_cols + [target_col]].copy()
+    
+    # Handle missing values
+    missing_test = test_data[feature_cols].isnull().sum().sum()
+    if missing_test > 0:
+        print(f"⚠ Filling {missing_test} missing values in test set with 0")
+        test_data[feature_cols] = test_data[feature_cols].fillna(0)
     
     # Evaluate
     metrics = predictor.evaluate(test_data)
