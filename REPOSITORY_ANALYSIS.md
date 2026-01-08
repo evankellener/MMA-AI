@@ -269,9 +269,9 @@ A critical distinction for valid model training:
 | `fighter_aggregated_stats_with_advanced_features.csv` | 48 MB | Step 1 output: aggregated fighter stats |
 | `fighter_aggregated_stats_with_decayed_diffs.csv` | 120 MB | Step 2 output: time-decayed features |
 | `matchup_comparisons.csv` | 93 MB | Step 4 output: all comparative features (1,019 precomp + 60 postcomp) |
-| `matchup_selected_features.csv` | 3.1 MB | Step 5 output: selected features (precomp only) |
-| `matchup_selected_features_precomp.csv` | - | Precomp features only (for model training) |
-| `matchup_selected_features_postcomp.csv` | - | Postcomp features only (for analysis/inference) |
+| `matchup_selected_features.csv` | 3.1 MB | Step 5 output: top 30 selected features (precomp only) |
+| `matchup_all_features_precomp.csv` | - | All precomp features (1,019) for model training |
+| `matchup_all_features_postcomp.csv` | - | All postcomp features (60) for analysis/inference |
 | `feature_registry.json` | 991 KB | Feature definitions and metadata |
 | `feature_schema.csv` | 974 KB | Feature timing classifications (precomp/postcomp) |
 | `feature_rankings.csv` | 6.7 KB | Ranked features by importance |

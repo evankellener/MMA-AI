@@ -1564,17 +1564,18 @@ def main():
         print(f"  - Selected features: {len(selected_features)}")
         print(f"  - Total columns (with metadata): {len(selected_df.columns)}")
         
-        # Also save precomp/postcomp splits using feature_schema
+        # Also create precomp/postcomp splits of ALL features (not just selected)
+        # This allows users to access the full feature set separated by timing
         try:
             from feature_schema import export_feature_sets
             precomp_file, postcomp_file = export_feature_sets(
-                selected_df,
-                precomp_output='matchup_selected_features_precomp.csv',
-                postcomp_output='matchup_selected_features_postcomp.csv'
+                matchup_df,  # Use full matchup_df, not selected_df
+                precomp_output='matchup_all_features_precomp.csv',
+                postcomp_output='matchup_all_features_postcomp.csv'
             )
-            print(f"\n✓ Saved feature splits:")
-            print(f"  - Precomp (for training): {precomp_file}")
-            print(f"  - Postcomp (for inference): {postcomp_file}")
+            print(f"\n✓ Saved full feature set splits:")
+            print(f"  - Precomp (all features for training): {precomp_file}")
+            print(f"  - Postcomp (all features for analysis): {postcomp_file}")
         except Exception as e:
             print(f"\n⚠ Could not create precomp/postcomp splits: {e}")
         

@@ -80,7 +80,7 @@ def classify_feature(feature_name: str) -> str:
     # Postcomp indicators - features that reveal fight outcomes
     postcomp_keywords = [
         'win', 'loss', 'result', 'outcome', 
-        'ko', 'submission', 'decision',
+        'ko', 'decision',  # Removed 'submission' here - it's ambiguous
         'win_streak', 'lose_streak', 'win_loss_ratio'
     ]
     
@@ -94,7 +94,8 @@ def classify_feature(feature_name: str) -> str:
     precomp_indicators = [
         'sig_str', 'total_str', 'head', 'body', 'leg',
         'distance', 'clinch', 'ground', 'takedown', 'td_',
-        'sub_att', 'submission', 'reversal', 'rev_',
+        'sub_att', 'sub_attempt', 'submission_att',  # More specific: attempt features
+        'reversal', 'rev_',
         'control', 'ctrl', 'knockdown', 'kd',
         'adjperf', 'dec_avg', '_per_min', '_acc', '_def',
         'absorbed', 'landed', 'attempted', 'att',
