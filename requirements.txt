@@ -1,0 +1,23 @@
+# MMA-AI Requirements
+# Python 3.8+
+
+# Core Data Processing
+pandas>=1.5.0
+numpy>=1.23.0
+
+# OCR Functionality
+pytesseract>=0.3.10
+Pillow>=9.5.0
+
+# Progress Bars
+tqdm>=4.65.0
+
+# Machine Learning and Visualization
+scikit-learn>=1.2.0
+matplotlib>=3.7.0
+
+# Advanced ML Framework (Optional - large install, only needed for model training)
+# autogluon>=0.8.0
+
+# Note: sqlite3 is included in Python standard library
+# Note: AutoGluon is commented out as it's large and only needed for model training

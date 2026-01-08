@@ -1088,11 +1088,22 @@ class FeatureSelector:
     
     def __init__(self):
         """Initialize feature selector."""
-        pass
+        # Import feature_schema for precomp/postcomp classification
+        try:
+            from feature_schema import load_feature_schema, resolve_feature_timing
+            self.schema_map = load_feature_schema()
+            self.resolve_timing = resolve_feature_timing
+            print("✓ Loaded feature schema for precomp/postcomp classification")
+        except Exception as e:
+            print(f"⚠ Warning: Could not load feature schema: {e}")
+            self.schema_map = {}
+            self.resolve_timing = None
     
     def select_features(self, matchup_df, target_col='fighter1_win', n_features=30):
         """
         Select the most predictive features using multiple methods.
+        Only selects from precomp (pre-competition) features that are available
+        before a fight, excluding postcomp features like win/loss records.
         
         Args:
             matchup_df: DataFrame with all matchup features
@@ -1103,7 +1114,7 @@ class FeatureSelector:
             DataFrame with selected features and metadata
         """
         print("\n" + "=" * 60)
-        print("Step 6: Feature Selection")
+        print("Step 6: Feature Selection (Precomp Features Only)")
         print("=" * 60)
         print(f"Input features: {len(matchup_df.columns)}")
         print(f"Target features: {n_features}")
@@ -1113,11 +1124,45 @@ class FeatureSelector:
                         'fighter1', 'fighter2', target_col]
         
         # Get all feature columns (numeric columns excluding metadata and target)
-        feature_cols = [col for col in matchup_df.columns 
-                       if col not in metadata_cols 
-                       and matchup_df[col].dtype in ['int64', 'float64']]
+        all_feature_cols = [col for col in matchup_df.columns 
+                           if col not in metadata_cols 
+                           and matchup_df[col].dtype in ['int64', 'float64']]
         
-        print(f"\nNumeric feature columns: {len(feature_cols)}")
+        print(f"\nTotal numeric feature columns: {len(all_feature_cols)}")
+        
+        # Filter to precomp features only (exclude postcomp features like win/loss)
+        if self.schema_map and self.resolve_timing:
+            precomp_feature_cols = []
+            postcomp_feature_cols = []
+            
+            for col in all_feature_cols:
+                timing = self.resolve_timing(col, self.schema_map)
+                if timing == 'precomp':
+                    precomp_feature_cols.append(col)
+                else:
+                    postcomp_feature_cols.append(col)
+            
+            feature_cols = precomp_feature_cols
+            print(f"Precomp features (usable for training): {len(precomp_feature_cols)}")
+            print(f"Postcomp features (excluded from selection): {len(postcomp_feature_cols)}")
+            
+            if postcomp_feature_cols:
+                print(f"\n⚠ Excluding postcomp features (contain fight outcome info):")
+                # Show a few examples
+                examples = [col for col in postcomp_feature_cols if 'win' in col.lower()][:5]
+                for col in examples:
+                    print(f"  - {col}")
+                if len(postcomp_feature_cols) > 5:
+                    print(f"  ... and {len(postcomp_feature_cols) - 5} more")
+        else:
+            # Fallback: manually exclude obvious postcomp features
+            print("⚠ Feature schema not available, using heuristic filtering")
+            feature_cols = [col for col in all_feature_cols 
+                           if not any(keyword in col.lower() 
+                                    for keyword in ['win', 'loss', 'result'])]
+            print(f"Features after heuristic filtering: {len(feature_cols)}")
+        
+        print(f"\nNumeric feature columns for selection: {len(feature_cols)}")
         
         # Filter to rows with valid target values
         valid_df = matchup_df[matchup_df[target_col].notna()].copy()
@@ -1509,7 +1554,7 @@ def main():
         selector = FeatureSelector()
         selected_df, selected_features = selector.select_features(matchup_df, target_col='fighter1_win', n_features=30)
         
-        # Save selected features dataset
+        # Save selected features dataset (precomp version for training)
         selected_output_file = 'matchup_selected_features.csv'
         # Sort by date, then by bout within each date
         selected_df = selected_df.sort_values(['DATE', 'BOUT'])
@@ -1518,6 +1563,21 @@ def main():
         print(f"  - Total matchups: {len(selected_df)}")
         print(f"  - Selected features: {len(selected_features)}")
         print(f"  - Total columns (with metadata): {len(selected_df.columns)}")
+        
+        # Also create precomp/postcomp splits of ALL features (not just selected)
+        # This allows users to access the full feature set separated by timing
+        try:
+            from feature_schema import export_feature_sets
+            precomp_file, postcomp_file = export_feature_sets(
+                matchup_df,  # Use full matchup_df, not selected_df
+                precomp_output='matchup_all_features_precomp.csv',
+                postcomp_output='matchup_all_features_postcomp.csv'
+            )
+            print(f"\n✓ Saved full feature set splits:")
+            print(f"  - Precomp (all features for training): {precomp_file}")
+            print(f"  - Postcomp (all features for analysis): {postcomp_file}")
+        except Exception as e:
+            print(f"\n⚠ Could not create precomp/postcomp splits: {e}")
         
         # Step 7: Print summary
         aggregator.print_summary_statistics()
