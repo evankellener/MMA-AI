@@ -147,14 +147,29 @@ def train_autogluon_model(train_df, val_df, feature_cols, target_col, time_limit
         print(f"⚠ Filling {missing_before} missing values with 0")
         combined_data[feature_cols] = combined_data[feature_cols].fillna(0)
     
+    # Check for infinite values
+    inf_count = np.isinf(combined_data[feature_cols].select_dtypes(include=[np.number])).sum().sum()
+    if inf_count > 0:
+        print(f"⚠ Found {inf_count} infinite values, replacing with 0")
+        combined_data[feature_cols] = combined_data[feature_cols].replace([np.inf, -np.inf], 0)
+    
     print(f"✓ Training data: {len(combined_data)} fights")
     print(f"✓ Time limit: {time_limit} seconds")
     print(f"✓ Evaluation metric: log_loss")
     
-    # Train with error handling
-    # Use verbosity=1 for minimal output (avoids Mac GPU detection crash from verbosity=2+)
+    # Check Python version
+    import sys
+    py_version = sys.version_info
+    print(f"✓ Python version: {py_version.major}.{py_version.minor}.{py_version.micro}")
+    if py_version.major == 3 and py_version.minor >= 12:
+        print("⚠ WARNING: Python 3.12+ may have compatibility issues with AutoGluon")
+        print("  Recommended: Python 3.8-3.11")
+    
+    # Train with full error reporting
     try:
-        print("Starting AutoGluon training with best_quality preset...")
+        print("\nStarting AutoGluon training with medium_quality preset...")
+        print("(This may take up to 5 minutes)")
+        
         predictor = TabularPredictor(
             label=target_col,
             eval_metric='log_loss',
@@ -162,10 +177,10 @@ def train_autogluon_model(train_df, val_df, feature_cols, target_col, time_limit
         ).fit(
             combined_data,
             time_limit=time_limit,
-            presets='best_quality',
-            num_gpus=0,  # Disable GPU to avoid detection issues
-            verbosity=1,  # Minimal output - avoids Mac GPU crash while showing progress
-            ag_args_fit={'num_cpus': 'auto'}
+            presets='medium_quality',
+            num_gpus=0,
+            verbosity=2,  # Full output for debugging
+            excluded_model_types=['KNN']  # Exclude KNN which can be slow
         )
         
         print(f"\n✓ Model trained successfully")
@@ -174,58 +189,56 @@ def train_autogluon_model(train_df, val_df, feature_cols, target_col, time_limit
         return predictor
     
     except Exception as e:
-        print(f"\n✗ Error during training with best_quality: {str(e)[:200]}")
-        print("\nTrying with 'medium_quality' preset instead...")
+        print(f"\n✗ Training failed with medium_quality preset")
+        print(f"\nERROR TYPE: {type(e).__name__}")
+        print(f"ERROR MESSAGE: {str(e)}")
+        print("\nFULL TRACEBACK:")
+        import traceback
+        traceback.print_exc()
+        
+        print("\n\nTrying simplified approach with just one model type...")
         
         try:
             predictor = TabularPredictor(
                 label=target_col,
                 eval_metric='log_loss',
-                path='./autogluon_models_fallback'
+                path='./autogluon_models_simple'
             ).fit(
                 combined_data,
-                time_limit=time_limit,
-                presets='medium_quality',
+                time_limit=120,
+                hyperparameters={'GBM': {}},  # Just LightGBM
                 num_gpus=0,
-                verbosity=1,
-                ag_args_fit={'num_cpus': 'auto'}
+                verbosity=2
             )
             
-            print(f"\n✓ Model trained successfully with fallback preset")
+            print(f"\n✓ Model trained successfully with simplified config")
             print(f"✓ Best model: {predictor.get_model_best()}")
             
             return predictor
         
         except Exception as e2:
-            print(f"\n✗ Training failed with medium_quality: {str(e2)[:200]}")
-            print("\nTrying with 'good_quality' (fast) preset...")
+            print(f"\n✗ Simplified training also failed")
+            print(f"\nERROR TYPE: {type(e2).__name__}")
+            print(f"ERROR MESSAGE: {str(e2)}")
+            print("\nFULL TRACEBACK:")
+            traceback.print_exc()
             
-            try:
-                predictor = TabularPredictor(
-                    label=target_col,
-                    eval_metric='log_loss',
-                    path='./autogluon_models_fast'
-                ).fit(
-                    combined_data,
-                    time_limit=time_limit,
-                    presets='good_quality',
-                    num_gpus=0,
-                    verbosity=1
-                )
-                
-                print(f"\n✓ Model trained successfully with fast preset")
-                print(f"✓ Best model: {predictor.get_model_best()}")
-                
-                return predictor
+            print("\n\n" + "=" * 70)
+            print("TROUBLESHOOTING STEPS:")
+            print("=" * 70)
+            print("1. Check AutoGluon installation:")
+            print("   pip show autogluon")
+            print("\n2. Try reinstalling:")
+            print("   pip uninstall autogluon -y")
+            print("   pip install autogluon==0.8.2")
+            print("\n3. Check Python version (need 3.8-3.11, NOT 3.12+):")
+            print(f"   Current: {py_version.major}.{py_version.minor}.{py_version.micro}")
+            print("\n4. Check available memory:")
+            print("   Requires at least 2-4GB free RAM")
+            print("\n5. Try with a smaller dataset:")
+            print("   Reduce time_limit or use fewer features")
             
-            except Exception as e3:
-                print(f"\n✗ All training attempts failed: {str(e3)[:200]}")
-                print("\nPlease check:")
-                print("  1. AutoGluon is properly installed: pip install autogluon")
-                print("  2. Sufficient memory is available (requires ~2GB)")
-                print("  3. Data format is correct (no infinite/NaN values)")
-                print("  4. Python version compatibility (3.8-3.11 recommended)")
-                return None
+            return None
 
 
 def evaluate_model(predictor, test_df, feature_cols, target_col):
